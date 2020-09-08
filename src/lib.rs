@@ -16,9 +16,10 @@
 //! regardless of the features used.
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
+#![cfg_attr(feature = "nightly", feature(min_const_generics))]
 
 use core::borrow::{Borrow, BorrowMut};
-use core::ops;
+use core::{cmp, fmt, hash, ops};
 
 #[cfg(any(feature = "std", all(unix, feature = "libc")))]
 use core::mem;
@@ -42,6 +43,12 @@ pub struct IoSlice<'a> {
     #[cfg(not(all(unix, feature = "libc")))]
     inner: &'a [u8],
 }
+
+// SAFETY: This is safe because whatever pointer that is sent to this slice must be Send in the
+// first place. Regular slices implement Send and Sync because of this.
+unsafe impl<'a> Send for IoSlice<'a> {}
+// SAFETY: Same as above.
+unsafe impl<'a> Sync for IoSlice<'a> {}
 
 impl<'a> IoSlice<'a> {
     pub fn new(slice: &'a [u8]) -> Self {
@@ -132,9 +139,9 @@ impl<'a> IoSlice<'a> {
         Some(slices)
     }
 }
-impl<'a> core::fmt::Debug for IoSlice<'a> {
+impl<'a> fmt::Debug for IoSlice<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self.as_slice(), f)
+        fmt::Debug::fmt(self.as_slice(), f)
     }
 }
 impl<'a> AsRef<[u8]> for IoSlice<'a> {
@@ -168,13 +175,13 @@ impl<'a> From<&'a mut [u8]> for IoSlice<'a> {
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> From<&'a [u8; N]> for IoSlice<'a> {
     fn from(array_ref: &'a [u8; N]) -> Self {
-        Self::from(array_ref.as_slice())
+        Self::from(&array_ref[..])
     }
 }
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> From<&'a mut [u8; N]> for IoSlice<'a> {
     fn from(array_ref: &'a mut [u8; N]) -> Self {
-        Self::from(array_ref.as_slice())
+        Self::from(&array_ref[..])
     }
 }
 impl<'a> PartialEq for IoSlice<'a> {
@@ -200,6 +207,44 @@ impl<'a, 'b> PartialEq<IoSliceMut<'b>> for IoSlice<'a> {
 }
 
 impl<'a> Eq for IoSlice<'a> {}
+
+impl<'a> PartialOrd<[u8]> for IoSlice<'a> {
+    fn partial_cmp(&self, other: &[u8]) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other)
+    }
+}
+impl<'a, 'b> PartialOrd<IoSliceMut<'b>> for IoSlice<'a> {
+    fn partial_cmp(&self, other: &IoSliceMut<'b>) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other.as_slice())
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> PartialOrd<[u8; N]> for IoSlice<'a> {
+    fn partial_cmp(&self, other: &[u8; N]) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other)
+    }
+}
+
+impl<'a> PartialOrd for IoSlice<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl<'a> Ord for IoSlice<'a> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        Ord::cmp(self.as_slice(), other.as_slice())
+    }
+}
+impl<'a> Default for IoSlice<'a> {
+    fn default() -> Self {
+        Self::new(&[])
+    }
+}
+impl<'a> hash::Hash for IoSlice<'a> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_slice())
+    }
+}
 
 #[cfg(feature = "std")]
 impl<'a> From<std::io::IoSlice<'a>> for IoSlice<'a> {
@@ -420,6 +465,79 @@ impl<'a> ops::DerefMut for IoSliceMut<'a> {
 impl<'a> From<IoSliceMut<'a>> for libc::iovec {
     fn from(slice: IoSliceMut<'a>) -> Self {
         slice.as_raw_iovec()
+    }
+}
+
+impl<'a> fmt::Debug for IoSliceMut<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.as_slice())
+            .finish()
+    }
+}
+impl<'a> PartialEq for IoSliceMut<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+impl<'a> PartialEq<[u8]> for IoSliceMut<'a> {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_slice() == other
+    }
+}
+impl<'a, 'b> PartialEq<IoSlice<'b>> for IoSliceMut<'a> {
+    fn eq(&self, other: &IoSlice<'b>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> PartialEq<[u8; N]> for IoSliceMut<'a> {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_slice() == &other[..]
+    }
+}
+impl<'a> Eq for IoSliceMut<'a> {}
+
+impl<'a> PartialOrd for IoSliceMut<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl<'a> PartialOrd<[u8]> for IoSliceMut<'a> {
+    fn partial_cmp(&self, other: &[u8]) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other)
+    }
+}
+impl<'a, 'b> PartialOrd<IoSlice<'b>> for IoSliceMut<'a> {
+    fn partial_cmp(&self, other: &IoSlice<'b>) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other.as_slice())
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> PartialOrd<[u8; N]> for IoSliceMut<'a> {
+    fn partial_cmp(&self, other: &[u8; N]) -> Option<cmp::Ordering> {
+        PartialOrd::partial_cmp(self.as_slice(), other)
+    }
+}
+impl<'a> Ord for IoSliceMut<'a> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        Ord::cmp(self.as_slice(), other.as_slice())
+    }
+}
+impl<'a> hash::Hash for IoSliceMut<'a> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_slice())
+    }
+}
+impl<'a> From<&'a mut [u8]> for IoSliceMut<'a> {
+    fn from(slice: &'a mut [u8]) -> Self {
+        Self::new(slice)
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> From<&'a mut [u8; N]> for IoSliceMut<'a> {
+    fn from(slice: &'a mut [u8; N]) -> Self {
+        Self::new(slice)
     }
 }
 

@@ -285,6 +285,8 @@ impl<'a> From<IoSlice<'a>> for libc::iovec {
         slice.as_raw_iovec()
     }
 }
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<'a> stable_deref_trait::StableDeref for IoSlice<'a> {}
 
 /// A `#![no_std]`-friendly wrapper over the [`std::io::IoSliceMut`].
 ///
@@ -304,6 +306,11 @@ pub struct IoSliceMut<'a> {
     #[cfg(not(all(unix, feature = "libc")))]
     inner: &'a mut [u8],
 }
+// SAFETY: Same as the safety section of impl Send for IoSlice.
+unsafe impl<'a> Send for IoSliceMut<'a> {}
+// SAFETY: Same as the safety section of impl Send for IoSlice.
+unsafe impl<'a> Sync for IoSliceMut<'a> {}
+
 impl<'a> IoSliceMut<'a> {
     pub fn new(slice: &'a mut [u8]) -> Self {
         #[cfg(all(unix, feature = "libc"))]
@@ -540,6 +547,9 @@ impl<'a, const N: usize> From<&'a mut [u8; N]> for IoSliceMut<'a> {
         Self::new(slice)
     }
 }
+
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 
 #[cfg(test)]
 mod tests {

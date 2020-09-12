@@ -12,8 +12,10 @@ keywords = ["os", "iovec", "vectored-io"]
 categories = ["api-bindings", "no-std", "os::unix-apis", "os"]
 
 [features]
-default = ["std"]
-std = ["libc"]
+default = ["std", "io_box"]
+std = ["libc", "alloc"]
+alloc = []
+io_box = ["alloc"]
 nightly = []
 
 [dependencies]

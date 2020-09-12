@@ -24,6 +24,9 @@ use core::{cmp, fmt, hash, ops};
 #[cfg(any(feature = "std", all(unix, feature = "libc")))]
 use core::mem;
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 /// A `#![no_std]`-friendly wrapper over the [`std::io::IoSliceMut`].
 ///
 /// Internally, the struct will store the following based on crate features:
@@ -551,6 +554,220 @@ impl<'a, const N: usize> From<&'a mut [u8; N]> for IoSliceMut<'a> {
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 
+#[cfg(feature = "alloc")]
+mod io_box {
+    use crate::{IoSlice, IoSliceMut};
+
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+
+    #[repr(transparent)]
+    pub struct IoBox {
+        #[cfg(all(unix, feature = "libc"))]
+        inner: libc::iovec,
+
+        #[cfg(not(all(unix, feature = "libc")))]
+        inner: Box<[u8]>,
+    }
+    impl IoBox {
+        pub fn into_raw_parts(self) -> (*mut u8, usize) {
+            #[cfg(all(unix, feature = "libc"))]
+            return {
+                let iov_base = self.inner.iov_base as *mut u8;
+                let iov_len = self.inner.iov_len;
+
+                core::mem::forget(self);
+
+                (iov_base, iov_len)
+            };
+            #[cfg(not(all(unix, feature = "libc")))]
+            return {
+                let slice_ptr = self.inner.into_raw();
+
+                unsafe {
+                    let slice = &*slice_ptr;
+                    (slice.as_mut_ptr(), slice.len())
+                }
+            };
+        }
+        pub unsafe fn from_raw_parts(base: *mut u8, len: usize) -> Self {
+            #[cfg(all(unix, feature = "libc"))]
+            return {
+                Self {
+                    inner: libc::iovec {
+                        iov_base: base as *mut libc::c_void,
+                        iov_len: len,
+                    },
+                }
+            };
+
+            #[cfg(not(all(unix, feature = "libc")))]
+            return {
+                Self {
+                    inner: Box::from_raw(core::slice::from_raw_parts_mut(base, len)),
+                }
+            };
+        }
+        #[cfg(all(unix, feature = "libc"))]
+        pub fn into_iovec(self) -> libc::iovec {
+            let iovec = self.inner;
+            core::mem::forget(iovec);
+            iovec
+        }
+
+        pub fn into_box(self) -> Box<[u8]> {
+            #[cfg(all(unix, feature = "libc"))]
+            return {
+                let (ptr, len) = self.into_raw_parts();
+                unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr, len)) }
+            };
+
+            #[cfg(not(all(unix, feature = "libc")))]
+            return {
+                io_box.inner
+            };
+        }
+        pub fn as_ioslice(&self) -> IoSlice {
+            IoSlice::new(self.as_slice())
+        }
+        pub fn as_ioslice_mut(&mut self) -> IoSliceMut {
+            IoSliceMut::new(self.as_slice_mut())
+        }
+        pub fn as_slice(&self) -> &[u8] {
+            #[cfg(all(unix, feature = "libc"))]
+            return unsafe { core::slice::from_raw_parts(self.inner.iov_base as *const u8, self.inner.iov_len) };
+
+            #[cfg(not(all(unix, feature = "libc")))]
+            return &*self.inner;
+        }
+        pub fn as_slice_mut(&mut self) -> &mut [u8] {
+            #[cfg(all(unix, feature = "libc"))]
+            return unsafe { core::slice::from_raw_parts_mut(self.inner.iov_base as *mut u8, self.inner.iov_len) };
+
+            #[cfg(not(all(unix, feature = "libc")))]
+            return &mut *self.inner;
+        }
+        pub fn slice_as_ioslices(these: &[Self]) -> &[IoSlice] {
+            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSlice, these.len()) }
+        }
+        pub fn slice_as_ioslices_mut(these: &mut [Self]) -> &mut [IoSlice] {
+            unsafe { core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSlice, these.len()) }
+        }
+        pub fn slice_as_mut_ioslices(these: &[Self]) -> &[IoSliceMut] {
+            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSliceMut, these.len()) }
+        }
+        pub fn slice_as_mut_ioslices_mut(these: &mut [Self]) -> &mut [IoSliceMut] {
+            unsafe { core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSliceMut, these.len()) }
+        }
+    }
+    impl Drop for IoBox {
+        fn drop(&mut self) {
+            #[cfg(all(unix, feature = "libc"))]
+            core::mem::drop(
+                unsafe { Box::from_raw(core::slice::from_raw_parts_mut(self.inner.iov_base as *mut u8, self.inner.iov_len)) }
+            );
+        }
+    }
+    impl From<Box<[u8]>> for IoBox {
+        fn from(boxed: Box<[u8]>) -> Self {
+            Self {
+                #[cfg(all(unix, feature = "libc"))]
+                inner: {
+                    let slice_ptr = Box::into_raw(boxed);
+
+                    // TODO: #![feature(slice_ptr_len)]
+                    //let iov_len = slice_ptr.len();
+
+                    let iov_len = unsafe { &*slice_ptr }.len();
+                    let iov_base = unsafe { &*slice_ptr }.as_ptr() as *mut libc::c_void;
+
+                    libc::iovec {
+                        iov_base,
+                        iov_len,
+                    }
+                },
+                #[cfg(not(all(unix, feature = "libc")))]
+                inner: boxed,
+            }
+        }
+    }
+    impl From<Vec<u8>> for IoBox {
+        fn from(vector: Vec<u8>) -> Self {
+            Self::from(vector.into_boxed_slice())
+        }
+    }
+    impl From<IoBox> for Box<[u8]> {
+        fn from(io_box: IoBox) -> Self {
+            io_box.into_box()
+        }
+    }
+    impl From<IoBox> for Vec<u8> {
+        fn from(io_box: IoBox) -> Self {
+            Self::from(Box::from(io_box))
+        }
+    }
+    impl core::fmt::Debug for IoBox {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}", self.as_slice())
+        }
+    }
+    impl core::ops::Deref for IoBox {
+        type Target = [u8];
+
+        fn deref(&self) -> &[u8] {
+            self.as_slice()
+        }
+    }
+    impl core::ops::DerefMut for IoBox {
+        fn deref_mut(&mut self) -> &mut [u8] {
+            self.as_slice_mut()
+        }
+    }
+    impl AsRef<[u8]> for IoBox {
+        fn as_ref(&self) -> &[u8] {
+            self.as_slice()
+        }
+    }
+    impl AsMut<[u8]> for IoBox {
+        fn as_mut(&mut self) -> &mut [u8] {
+            self.as_slice_mut()
+        }
+    }
+    impl core::borrow::Borrow<[u8]> for IoBox {
+        fn borrow(&self) -> &[u8] {
+            self.as_slice()
+        }
+    }
+    impl core::borrow::BorrowMut<[u8]> for IoBox {
+        fn borrow_mut(&mut self) -> &mut [u8] {
+            self.as_slice_mut()
+        }
+    }
+    impl PartialEq for IoBox {
+        fn eq(&self, other: &Self) -> bool {
+            self.as_slice() == other.as_slice()
+        }
+    }
+    impl PartialEq<[u8]> for IoBox {
+        fn eq(&self, other: &[u8]) -> bool {
+            self.as_slice() == other
+        }
+    }
+    impl<'a> PartialEq<IoSlice<'a>> for IoBox {
+        fn eq(&self, other: &IoSlice) -> bool {
+            self.as_slice() == other.as_slice()
+        }
+    }
+    impl<'a> PartialEq<IoSliceMut<'a>> for IoBox {
+        fn eq(&self, other: &IoSliceMut) -> bool {
+            self.as_slice() == other.as_slice()
+        }
+    }
+    impl Eq for IoBox {}
+    // TODO: more impls
+}
+pub use io_box::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,6 +855,22 @@ mod tests {
 
         assert_eq!(mem::size_of::<IoSlice>(), mem::size_of::<libc::iovec>());
         assert_eq!(mem::align_of::<IoSlice>(), mem::align_of::<libc::iovec>());
+
+        unsafe {
+            let slice: &[u8] = b"Hello, world!";
+
+            let iov_base = slice.as_ptr() as *mut libc::c_void;
+            let iov_len = slice.len();
+
+            let vec = libc::iovec {
+                iov_base,
+                iov_len,
+            };
+
+            let wrapped: IoSlice = mem::transmute::<libc::iovec, IoSlice>(vec);
+            assert_eq!(wrapped.as_ptr(), iov_base as *const u8);
+            assert_eq!(wrapped.len(), iov_len);
+        }
 
         let ioslices = [IoSlice::new(FIRST), IoSlice::new(SPACE), IoSlice::new(SECOND), IoSlice::new(SPACE), IoSlice::new(THIRD), IoSlice::new(FOURTH)];
         let iovecs = IoSlice::as_raw_iovecs(&ioslices);

@@ -206,10 +206,9 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     pub fn advance(&mut self, count: usize) {
         unsafe {
             self.__set_len(
-                self
-                    .__len()
+                self.__len()
                     .checked_sub(count)
-                    .expect("IoSlice::advance causes length to overflow")
+                    .expect("IoSlice::advance causes length to overflow"),
             );
             self.__set_ptr(self.__ptr().add(count));
         }
@@ -334,7 +333,8 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = core::slice::from_raw_parts(ptr as *const I::DerefTargetItem, self.__len());
+            self.inner =
+                core::slice::from_raw_parts(ptr as *const I::DerefTargetItem, self.__len());
         }
     }
     #[inline]
@@ -348,12 +348,15 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         {
             use core::convert::TryInto;
 
-            self.inner.0.len = len.try_into().expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
+            self.inner.0.len = len
+                .try_into()
+                .expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
         }
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, len);
+            self.inner =
+                core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, len);
         }
     }
     unsafe fn __construct(ptr: *const u8, len: usize) -> Self {
@@ -372,18 +375,15 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
             #[cfg(all(windows, feature = "winapi"))]
             inner: (
                 WSABUF {
-                    len: len.try_into().expect("Constructing an IoSlice that is larger than the 2^32 limit of WSABUF"),
+                    len: len.try_into().expect(
+                        "Constructing an IoSlice that is larger than the 2^32 limit of WSABUF",
+                    ),
                     buf: ptr as *mut CHAR,
                 },
                 PhantomData,
             ),
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: {
-                core::slice::from_raw_parts(
-                    ptr as *const I::DerefTargetItem,
-                    len,
-                )
-            },
+            inner: { core::slice::from_raw_parts(ptr as *const I::DerefTargetItem, len) },
 
             _marker: PhantomData,
         }
@@ -620,7 +620,12 @@ impl<'a, I: Initialization> From<std::io::IoSlice<'a>> for IoSlice<'a, I> {
                 PhantomData,
             ),
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const I::DerefTargetItem, slice.len()) },
+            inner: unsafe {
+                core::slice::from_raw_parts(
+                    slice.as_ptr() as *const I::DerefTargetItem,
+                    slice.len(),
+                )
+            },
 
             _marker: PhantomData,
         }
@@ -821,10 +826,9 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     pub fn advance(&mut self, count: usize) {
         unsafe {
             self.__set_len(
-                self
-                    .__len()
+                self.__len()
                     .checked_sub(count)
-                    .expect("IoSlice::advance causes length to overflow")
+                    .expect("IoSlice::advance causes length to overflow"),
             );
             self.__set_ptr(self.__ptr().add(count));
         }
@@ -863,10 +867,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[inline]
     pub fn inner_data(&self) -> &[I::DerefTargetItem] {
         unsafe {
-            core::slice::from_raw_parts(
-                self.__ptr() as *const I::DerefTargetItem,
-                self.__len(),
-            )
+            core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, self.__len())
         }
     }
     /// Retrieve the "inner data" mutably, pointed to by the I/O slice, being to either `&mut [u8]`
@@ -874,10 +875,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[inline]
     pub fn inner_data_mut(&mut self) -> &mut [I::DerefTargetItem] {
         unsafe {
-            core::slice::from_raw_parts_mut(
-                self.__ptr() as *mut I::DerefTargetItem,
-                self.__len(),
-            )
+            core::slice::from_raw_parts_mut(self.__ptr() as *mut I::DerefTargetItem, self.__len())
         }
     }
     /// Get the "inner data" mutably, but with the lifetime `'a` rather than the lifetime of
@@ -885,10 +883,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[inline]
     pub fn into_inner_data(self) -> &'a mut [I::DerefTargetItem] {
         unsafe {
-            core::slice::from_raw_parts_mut(
-                self.__ptr() as *mut I::DerefTargetItem,
-                self.__len(),
-            )
+            core::slice::from_raw_parts_mut(self.__ptr() as *mut I::DerefTargetItem, self.__len())
         }
     }
     /// Convert a regular slice that points to either `u8` or `MaybeUninit<u8>`, into
@@ -978,7 +973,8 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, self.__len());
+            self.inner =
+                core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, self.__len());
         }
     }
     #[inline]
@@ -992,12 +988,15 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
         {
             use core::convert::TryInto;
 
-            self.inner.0.len = len.try_into().expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
+            self.inner.0.len = len
+                .try_into()
+                .expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
         }
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = core::slice::from_raw_parts_mut(self.__ptr() as *mut I::DerefTargetItem, len);
+            self.inner =
+                core::slice::from_raw_parts_mut(self.__ptr() as *mut I::DerefTargetItem, len);
         }
     }
     #[inline]
@@ -1017,18 +1016,15 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
             #[cfg(all(windows, feature = "winapi"))]
             inner: (
                 WSABUF {
-                    len: len.try_into().expect("constructing an IoSlice that is larger than the 2^32 limits of WSABUF"),
+                    len: len.try_into().expect(
+                        "constructing an IoSlice that is larger than the 2^32 limits of WSABUF",
+                    ),
                     buf: ptr as *mut CHAR,
                 },
                 PhantomData,
             ),
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: {
-                core::slice::from_raw_parts_mut(
-                    ptr as *mut I::DerefTargetItem,
-                    len,
-                )
-            },
+            inner: { core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, len) },
 
             _marker: PhantomData,
         }
@@ -1044,9 +1040,7 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`to_slice`]: #method.to_slice
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(self.__ptr() as *const u8, self.__len())
-        }
+        unsafe { core::slice::from_raw_parts(self.__ptr() as *const u8, self.__len()) }
     }
     /// Take an [`IoSliceMut`] by value, turning it into an immutable byte slice of lifetime `'a`.
     #[inline]
@@ -1061,17 +1055,13 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`into_slice_mut`]: #method.into_slice_mut
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.__ptr(), self.__len())
-        }
+        unsafe { core::slice::from_raw_parts_mut(self.__ptr(), self.__len()) }
     }
 
     /// Take an [`IoSliceMut`] by value, turning it into a mutable byte slice of lifetime `'a`.
     #[inline]
     pub fn into_slice_mut(self) -> &'a mut [u8] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.__ptr(), self.__len())
-        }
+        unsafe { core::slice::from_raw_parts_mut(self.__ptr(), self.__len()) }
     }
 
     // TODO: conversion by reference between std I/O slices

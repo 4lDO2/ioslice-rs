@@ -1,6 +1,6 @@
 [package]
 name = "ioslice"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["4lDO2 <4lDO2@protonmail.com>"]
 edition = "2018"
 description = "no_std I/O slices that are still optionally ABI compatible with std and lbc"

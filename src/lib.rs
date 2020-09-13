@@ -1671,7 +1671,7 @@ mod tests {
             IoSlice::new(THIRD),
             IoSlice::new(FOURTH),
         ];
-        let std_ioslices = IoSlice::as_std_ioslices(&ioslices);
+        let std_ioslices = IoSlice::cast_to_std_ioslices(&ioslices);
 
         assert!(std_ioslices
             .iter()
@@ -1688,7 +1688,7 @@ mod tests {
         let mut ioslices = &mut ioslices[..];
 
         loop {
-            let std_ioslices = IoSlice::as_std_ioslices(&ioslices);
+            let std_ioslices = IoSlice::cast_to_std_ioslices(&ioslices);
 
             match (&mut *buffer).write_vectored(std_ioslices) {
                 Ok(0) => break,
@@ -1732,7 +1732,7 @@ mod tests {
             IoSlice::new(THIRD),
             IoSlice::new(FOURTH),
         ];
-        let iovecs = IoSlice::as_raw_iovecs(&ioslices);
+        let iovecs = IoSlice::cast_to_raw_iovecs(&ioslices);
 
         let mut fds = [0; 2];
 
@@ -1746,7 +1746,7 @@ mod tests {
             .chunks_mut(4)
             .map(|slice| IoSliceMut::new(slice))
             .collect::<Vec<_>>();
-        let buffer_parts_iovecs = IoSliceMut::as_raw_iovecs(&*buffer_parts);
+        let buffer_parts_iovecs = IoSliceMut::cast_to_raw_iovecs(&*buffer_parts);
 
         unsafe {
             // TODO: Maybe repeat since writev and readv don't have to return everything?

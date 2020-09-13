@@ -18,6 +18,9 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]
 
+#[cfg(all(unix, windows))]
+compile_error!("cannot compile for both windows and unix");
+
 mod private {
     pub trait Sealed {}
 }
@@ -47,8 +50,14 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::{cmp, fmt, hash, ops};
 
-#[cfg(any(feature = "std", all(unix, feature = "libc")))]
+#[cfg(all(unix, feature = "libc"))]
 use core::mem;
+
+#[cfg(all(windows, feature = "winapi"))]
+use winapi::shared::{
+    ntdef::{CHAR, ULONG},
+    ws2def::WSABUF,
+};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -59,8 +68,8 @@ extern crate alloc;
 ///
 /// * `std` - wrapping [`std::io::IoSlice`] directly, with accessors for it as well as conversion
 ///   functions and From impls.
-/// * `libc` (with `#[cfg(unix)]` - wrapping [`libc::iovec`] directly on platforms that support it,
-///   together with a marker making rustc think this stores a `&'a mut [u8]`.
+/// * `libc` (with `#[cfg(unix)]` - wrapping [`libc::iovec`] directly on platforms that support it.
+/// * `winapi` (with `#[cfg(windows)]`) - wrapping `WSABUF` directly.
 /// * (none) - wrapping a regular slice, that may not have the same ABI guarantees as the types
 ///   from std or libc have.
 #[repr(transparent)]
@@ -69,7 +78,10 @@ pub struct IoSlice<'a, I: Initialization = Initialized> {
     #[cfg(all(unix, feature = "libc"))]
     inner: (libc::iovec, PhantomData<&'a [I::DerefTargetItem]>),
 
-    #[cfg(not(all(unix, feature = "libc")))]
+    #[cfg(all(windows, feature = "winapi"))]
+    inner: (WSABUF, PhantomData<&'a [I::DerefTargetItem]>),
+
+    #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
     inner: &'a [I::DerefTargetItem],
 
     _marker: PhantomData<I>,
@@ -96,52 +108,24 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     /// therefore has to prove externally that the memory is in fact initialized before using it.
     #[inline]
     pub fn new(slice: &'a [u8]) -> Self {
-        Self {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: slice.as_ptr() as *mut libc::c_void,
-                    iov_len: slice.len(),
-                },
-                PhantomData,
-            ),
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe {
-                core::slice::from_raw_parts(
-                    slice.as_ptr() as *const I::DerefTargetItem,
-                    slice.len(),
-                )
-            },
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(slice.as_ptr(), slice.len()) }
     }
 
     /// Cast any I/O slice into an [`Uninitialized`] slice, forgetting about the original
     /// initializedness.
+    #[inline]
     pub fn as_uninit(&self) -> &IoSlice<'a, Uninitialized> {
         unsafe { &*(self as *const Self as *const IoSlice<'a, Uninitialized>) }
     }
+    #[inline]
     pub fn as_uninit_mut(&mut self) -> &mut IoSlice<'a, Uninitialized> {
         unsafe { &mut *(self as *mut Self as *mut IoSlice<'a, Uninitialized>) }
     }
     /// Turn any I/O slice into an [`Uninitialized`] slice, forgetting about the original
     /// initializedness.
+    #[inline]
     pub fn into_uninit(self) -> IoSlice<'a, Uninitialized> {
-        IoSlice {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (self.inner.0, PhantomData),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe {
-                core::slice::from_raw_parts(
-                    self.inner.as_ptr() as *const MaybeUninit<u8>,
-                    self.inner.len(),
-                )
-            },
-
-            _marker: PhantomData,
-        }
+        unsafe { IoSlice::__construct(self.__ptr(), self.__len()) }
     }
 
     /// Unsafely turn an I/O slice, being already [`Initialized`] or not, into an I/O slice that is [`Initialized`].
@@ -152,21 +136,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     /// [`std::mem::MaybeUninit`] docs.
     #[inline]
     pub unsafe fn assume_init(self) -> IoSlice<'a, Initialized> {
-        IoSlice {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: self.inner.0.iov_base,
-                    iov_len: self.inner.0.iov_len,
-                },
-                PhantomData,
-            ),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: core::slice::from_raw_parts(self.inner.as_ptr() as *const u8, self.inner.len()),
-
-            _marker: PhantomData,
-        }
+        IoSlice::__construct(self.__ptr(), self.__len())
     }
 
     /// Wrap a system [`libc::iovec`] into a wrapped I/O slice, assuming the iovec can be
@@ -229,22 +199,19 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     ///
     /// # Panics
     ///
-    /// This will panic if count is greater than the current length.
+    /// This will panic if count is greater than the current length. On Windows, this will also
+    /// therefore instantly fail if count is greater than 2^32, since larger buffers cannot be
+    /// constructed.
     #[inline]
     pub fn advance(&mut self, count: usize) {
-        #[cfg(all(unix, feature = "libc"))]
         unsafe {
-            self.inner.0.iov_len = self
-                .inner
-                .0
-                .iov_len
-                .checked_sub(count)
-                .expect("IoSlice::advance causes length to overflow");
-            self.inner.0.iov_base = self.inner.0.iov_base.add(count)
-        }
-        #[cfg(not(all(unix, feature = "libc")))]
-        {
-            self.inner = &self.inner[count..];
+            self.__set_len(
+                self
+                    .__len()
+                    .checked_sub(count)
+                    .expect("IoSlice::advance causes length to overflow")
+            );
+            self.__set_ptr(self.__ptr().add(count));
         }
     }
     /// Advance a range of slices by a specific offset, by advancing each slice individually until
@@ -290,8 +257,12 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         return unsafe {
             core::slice::from_raw_parts(self.inner.0.iov_base as *const _, self.inner.0.iov_len)
         };
+        #[cfg(all(windows, feature = "winapi"))]
+        return unsafe {
+            core::slice::from_raw_parts(self.inner.0.buf as *const _, self.inner.0.len as usize)
+        };
 
-        #[cfg(not(all(unix, feature = "libc")))]
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         return unsafe {
             core::slice::from_raw_parts(self.inner.as_ptr() as *const _, self.inner.len())
         };
@@ -309,7 +280,16 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
                 PhantomData,
             ),
 
-            #[cfg(not(all(unix, feature = "libc")))]
+            #[cfg(all(windows, feature = "winapi"))]
+            inner: (
+                WSABUF {
+                    len: inner_data.len() as ULONG,
+                    buf: inner_data.as_ptr() as *mut CHAR,
+                },
+                PhantomData,
+            ),
+
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
             inner: inner_data,
 
             _marker: PhantomData,
@@ -319,6 +299,94 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[inline]
     pub fn as_maybe_uninit_slice(&self) -> &'a [MaybeUninit<u8>] {
         self.as_uninit().inner_data()
+    }
+    fn __ptr(&self) -> *const u8 {
+        #[cfg(all(unix, feature = "libc"))]
+        return self.inner.0.iov_base as *const u8;
+
+        #[cfg(all(windows, feature = "winapi"))]
+        return self.inner.0.buf as *const u8;
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        return self.inner.as_ptr();
+    }
+    fn __len(&self) -> usize {
+        #[cfg(all(unix, feature = "libc"))]
+        return self.inner.0.iov_len as usize;
+
+        #[cfg(all(windows, feature = "winapi"))]
+        return self.inner.0.len as usize;
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        return self.inner.as_ptr();
+    }
+    #[inline]
+    unsafe fn __set_ptr(&mut self, ptr: *const u8) {
+        #[cfg(all(unix, feature = "libc"))]
+        {
+            self.inner.0.iov_base = ptr as *mut libc::c_void;
+        }
+
+        #[cfg(all(windows, feature = "winapi"))]
+        {
+            self.inner.0.buf = ptr as *mut CHAR;
+        }
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        {
+            self.inner = unsafe { core::slice::from_raw_parts_mut(ptr, self.__len()) };
+        }
+    }
+    #[inline]
+    unsafe fn __set_len(&mut self, len: usize) {
+        #[cfg(all(unix, feature = "libc"))]
+        {
+            self.inner.0.iov_len = len as usize;
+        }
+
+        #[cfg(all(windows, feature = "libc"))]
+        {
+            use core::convert::TryInto;
+
+            self.inner.0.len = len.try_into().expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
+        }
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        {
+            self.inner = unsafe { core::slice::from_raw_parts_mut(self.__ptr(), len) };
+        }
+    }
+    unsafe fn __construct(ptr: *const u8, len: usize) -> Self {
+        #[cfg(all(windows, feature = "winapi"))]
+        use core::convert::TryInto;
+
+        Self {
+            #[cfg(all(unix, feature = "libc"))]
+            inner: (
+                libc::iovec {
+                    iov_base: slice.as_ptr() as *mut libc::c_void,
+                    iov_len: slice.len(),
+                },
+                PhantomData,
+            ),
+            #[cfg(all(windows, feature = "winapi"))]
+            inner: (
+                WSABUF {
+                    len: len.try_into().expect("Constructing an IoSlice that is larger than the 2^32 limit of WSABUF"),
+                    buf: ptr as *mut CHAR,
+                },
+                PhantomData,
+            ),
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+            inner: {
+                core::slice::from_raw_parts(
+                    slice.as_ptr() as *const I::DerefTargetItem,
+                    slice.len(),
+                )
+            },
+
+            _marker: PhantomData,
+        }
     }
 }
 impl<'a> IoSlice<'a, Initialized> {
@@ -542,8 +610,17 @@ impl<'a, I: Initialization> From<std::io::IoSlice<'a>> for IoSlice<'a, I> {
                 },
                 PhantomData,
             ),
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) },
+
+            #[cfg(all(windows, feature = "winapi"))]
+            inner: (
+                WSABUF {
+                    len: slice.len() as ULONG,
+                    buf: slice.as_ptr() as *mut CHAR,
+                },
+                PhantomData,
+            ),
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+            inner: unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const I::DerefTargetItem, slice.len()) },
 
             _marker: PhantomData,
         }
@@ -553,21 +630,7 @@ impl<'a, I: Initialization> From<std::io::IoSlice<'a>> for IoSlice<'a, I> {
 impl<'a, I: Initialization> From<std::io::IoSliceMut<'a>> for IoSlice<'a, I> {
     #[inline]
     fn from(mut slice: std::io::IoSliceMut<'a>) -> Self {
-        Self {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: slice.as_mut_ptr() as *mut libc::c_void,
-                    iov_len: slice.len(),
-                },
-                PhantomData,
-            ),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr(), slice.len()) },
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(slice.as_mut_ptr(), slice.len()) }
     }
 }
 #[cfg(all(unix, feature = "libc"))]
@@ -595,7 +658,10 @@ pub struct IoSliceMut<'a, I: Initialization = Initialized> {
     #[cfg(all(unix, feature = "libc"))]
     inner: (libc::iovec, PhantomData<&'a mut [I::DerefTargetItem]>),
 
-    #[cfg(not(all(unix, feature = "libc")))]
+    #[cfg(all(windows, feature = "winapi"))]
+    inner: (WSABUF, PhantomData<&'a mut [I::DerefTargetItem]>),
+
+    #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
     inner: &'a mut [I::DerefTargetItem],
 
     _marker: PhantomData<I>,
@@ -617,25 +683,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// be initialized since its type is [`u8`] and not [`MaybeUninit<u8>`].
     #[inline]
     pub fn new(slice: &'a mut [u8]) -> Self {
-        Self {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: slice.as_mut_ptr() as *mut libc::c_void,
-                    iov_len: slice.len(),
-                },
-                PhantomData,
-            ),
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe {
-                core::slice::from_raw_parts_mut(
-                    slice.as_mut_ptr() as *mut I::DerefTargetItem,
-                    slice.len(),
-                )
-            },
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(slice.as_mut_ptr(), slice.len()) }
     }
     /// Unsafely cast a possibly uninitialized slice into an initialized slice.
     ///
@@ -647,18 +695,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// [`std::mem::MaybeUninit`] docs.
     #[inline]
     pub unsafe fn assume_init(self) -> IoSliceMut<'a, Initialized> {
-        IoSliceMut {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (self.inner.0, PhantomData),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: core::slice::from_raw_parts_mut(
-                self.inner.as_mut_ptr() as *mut u8,
-                self.inner.len(),
-            ),
-
-            _marker: PhantomData,
-        }
+        IoSliceMut::__construct(self.__ptr(), self.__len())
     }
 
     /// Unsafely cast a possibly uninitialized slice into an initialized slice, by reference.
@@ -683,20 +720,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// Cast an I/O slice, being [`Initialized`] or not, into an [`Uninitialized`] I/O slice.
     #[inline]
     pub fn into_uninit(self) -> IoSliceMut<'a, Uninitialized> {
-        IoSliceMut {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (self.inner.0, PhantomData),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.inner.as_mut_ptr() as *mut MaybeUninit<u8>,
-                    self.inner.len(),
-                )
-            },
-
-            _marker: PhantomData,
-        }
+        unsafe { IoSliceMut::__construct(self.__ptr(), self.__len()) }
     }
     /// Cast an I/O slice, being [`Initialized`] or not, into an [`Uninitialized`] I/O slice, by
     /// reference.
@@ -795,25 +819,14 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// This will panic if `count` is greater than the current length.
     #[inline]
     pub fn advance(&mut self, count: usize) {
-        #[cfg(all(unix, feature = "libc"))]
         unsafe {
-            self.inner.0.iov_len = self
-                .inner
-                .0
-                .iov_len
-                .checked_sub(count)
-                .expect("IoSlice::advance causes length to overflow");
-            self.inner.0.iov_base = self.inner.0.iov_base.add(count)
-        }
-        #[cfg(not(all(unix, feature = "libc")))]
-        unsafe {
-            let new_len = self
-                .inner
-                .len()
-                .checked_sub(count)
-                .expect("IoSlice::advance causes length to overflow");
-            self.inner =
-                core::slice::from_raw_parts_mut(self.inner.as_mut_ptr().add(count), new_len);
+            self.__set_len(
+                self
+                    .__len()
+                    .checked_sub(count)
+                    .expect("IoSlice::advance causes length to overflow")
+            );
+            self.__set_ptr(self.__ptr().add(count));
         }
     }
     /// Advance multiple slices by `n`, skipping and truncating slices until there are `n` less
@@ -849,65 +862,40 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// or `&[MaybeUninit<u8>]` depending on the generic type parameter `I`.
     #[inline]
     pub fn inner_data(&self) -> &[I::DerefTargetItem] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
+        unsafe {
             core::slice::from_raw_parts(
-                self.inner.0.iov_base as *const I::DerefTargetItem,
-                self.inner.0.iov_len,
+                self.__ptr() as *const I::DerefTargetItem,
+                self.__len(),
             )
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return &*self.inner;
+        }
     }
     /// Retrieve the "inner data" mutably, pointed to by the I/O slice, being to either `&mut [u8]`
     /// or `&mut [MaybeUninit<u8>]` depending on the generic type parameter `I`.
     #[inline]
     pub fn inner_data_mut(&mut self) -> &mut [I::DerefTargetItem] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
+        unsafe {
             core::slice::from_raw_parts_mut(
-                self.inner.0.iov_base as *mut I::DerefTargetItem,
-                self.inner.0.iov_len,
+                self.__ptr() as *mut I::DerefTargetItem,
+                self.__len(),
             )
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return self.inner;
+        }
     }
     /// Get the "inner data" mutably, but with the lifetime `'a` rather than the lifetime of
     /// `self`.
+    #[inline]
     pub fn into_inner_data(self) -> &'a mut [I::DerefTargetItem] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
+        unsafe {
             core::slice::from_raw_parts_mut(
-                self.inner.0.iov_base as *mut I::DerefTargetItem,
-                self.inner.0.iov_len,
+                self.__ptr() as *mut I::DerefTargetItem,
+                self.__len(),
             )
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return self.inner;
+        }
     }
     /// Convert a regular slice that points to either `u8` or `MaybeUninit<u8>`, into
     /// [`IoSliceMut`].
     #[inline]
     pub fn from_inner_data(inner_data: &'a mut [I::DerefTargetItem]) -> Self {
-        Self {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: inner_data.as_mut_ptr() as *mut libc::c_void,
-                    iov_len: inner_data.len(),
-                },
-                PhantomData,
-            ),
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            inner: inner_data,
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(inner_data.as_mut_ptr() as *mut u8, inner_data.len()) }
     }
 
     #[inline]
@@ -953,6 +941,98 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
 
         unsafe { self.assume_init_mut() }
     }
+
+    #[inline]
+    fn __ptr(&self) -> *mut u8 {
+        #[cfg(all(unix, feature = "libc"))]
+        return self.inner.0.iov_base as *mut u8;
+
+        #[cfg(all(windows, feature = "libc"))]
+        return self.inner.0.buf as *mut u8;
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        return self.inner.as_ptr();
+    }
+    #[inline]
+    fn __len(&self) -> usize {
+        #[cfg(all(unix, feature = "libc"))]
+        return self.inner.0.iov_len as usize;
+
+        #[cfg(all(windows, feature = "libc"))]
+        return self.inner.0.len as usize;
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        return self.inner.len();
+    }
+    #[inline]
+    unsafe fn __set_ptr(&mut self, ptr: *mut u8) {
+        #[cfg(all(unix, feature = "libc"))]
+        {
+            self.inner.0.iov_base = ptr as *mut libc::c_void;
+        }
+
+        #[cfg(all(windows, feature = "winapi"))]
+        {
+            self.inner.0.buf = ptr as *mut CHAR;
+        }
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        {
+            self.inner = unsafe { core::slice::from_raw_parts_mut(ptr, self.__len()) };
+        }
+    }
+    #[inline]
+    unsafe fn __set_len(&mut self, len: usize) {
+        #[cfg(all(unix, feature = "libc"))]
+        {
+            self.inner.0.iov_len = len as usize;
+        }
+
+        #[cfg(all(windows, feature = "libc"))]
+        {
+            use core::convert::TryInto;
+
+            self.inner.0.len = len.try_into().expect("length exceeding 2^32 bytes, which is the limit of WSABUF");
+        }
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+        {
+            self.inner = unsafe { core::slice::from_raw_parts_mut(self.__ptr(), len) };
+        }
+    }
+    #[inline]
+    unsafe fn __construct(ptr: *mut u8, len: usize) -> Self {
+        #[cfg(all(windows, feature = "winapi"))]
+        use core::convert::TryInto;
+
+        Self {
+            #[cfg(all(unix, feature = "libc"))]
+            inner: (
+                libc::iovec {
+                    iov_base: ptr as *mut libc::c_void,
+                    iov_len: len as usize,
+                },
+                PhantomData,
+            ),
+            #[cfg(all(windows, feature = "winapi"))]
+            inner: (
+                WSABUF {
+                    len: len.try_into().expect("constructing an IoSlice that is larger than the 2^32 limits of WSABUF"),
+                    buf: ptr as *mut CHAR,
+                },
+                PhantomData,
+            ),
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+            inner: unsafe {
+                core::slice::from_raw_parts_mut(
+                    ptr as *mut I::DerefTargetItem,
+                    len,
+                )
+            },
+
+            _marker: PhantomData,
+        }
+    }
 }
 impl<'a> IoSliceMut<'a, Initialized> {
     /// Retrieve the inner slice immutably. This requires the I/O slice to be initialized.
@@ -964,13 +1044,9 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`to_slice`]: #method.to_slice
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
-            core::slice::from_raw_parts(self.inner.0.iov_base as *const u8, self.inner.0.iov_len)
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return &*self.inner;
+        unsafe {
+            core::slice::from_raw_parts(self.__ptr() as *const u8, self.__len())
+        }
     }
     /// Take an [`IoSliceMut`] by value, turning it into an immutable byte slice of lifetime `'a`.
     #[inline]
@@ -985,25 +1061,17 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`into_slice_mut`]: #method.into_slice_mut
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
-            core::slice::from_raw_parts_mut(self.inner.0.iov_base as *mut u8, self.inner.0.iov_len)
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return self.inner;
+        unsafe {
+            core::slice::from_raw_parts_mut(self.__ptr(), self.__len())
+        }
     }
 
     /// Take an [`IoSliceMut`] by value, turning it into a mutable byte slice of lifetime `'a`.
     #[inline]
     pub fn into_slice_mut(self) -> &'a mut [u8] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
-            core::slice::from_raw_parts_mut(self.inner.0.iov_base as *mut u8, self.inner.0.iov_len)
-        };
-
-        #[cfg(not(all(unix, feature = "libc")))]
-        return self.inner;
+        unsafe {
+            core::slice::from_raw_parts_mut(self.__ptr(), self.__len())
+        }
     }
 
     // TODO: conversion by reference between std I/O slices
@@ -1604,6 +1672,8 @@ pub use io_box::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use core::mem;
 
     const FIRST: &[u8] = b"this";
     const SECOND: &[u8] = b"is";

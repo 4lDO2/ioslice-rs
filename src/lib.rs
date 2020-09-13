@@ -50,7 +50,7 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::{cmp, fmt, hash, ops};
 
-#[cfg(all(unix, feature = "libc"))]
+#[allow(unused_imports)]
 use core::mem;
 
 #[cfg(all(windows, feature = "winapi"))]
@@ -308,7 +308,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         return self.inner.0.buf as *const u8;
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-        return self.inner.as_ptr();
+        return self.inner.as_ptr() as *const u8;
     }
     fn __len(&self) -> usize {
         #[cfg(all(unix, feature = "libc"))]
@@ -318,7 +318,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         return self.inner.0.len as usize;
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-        return self.inner.as_ptr();
+        return self.inner.len();
     }
     #[inline]
     unsafe fn __set_ptr(&mut self, ptr: *const u8) {
@@ -334,7 +334,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = unsafe { core::slice::from_raw_parts_mut(ptr, self.__len()) };
+            self.inner = core::slice::from_raw_parts(ptr as *const I::DerefTargetItem, self.__len());
         }
     }
     #[inline]
@@ -353,7 +353,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = unsafe { core::slice::from_raw_parts_mut(self.__ptr(), len) };
+            self.inner = core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, len);
         }
     }
     unsafe fn __construct(ptr: *const u8, len: usize) -> Self {
@@ -364,8 +364,8 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
             #[cfg(all(unix, feature = "libc"))]
             inner: (
                 libc::iovec {
-                    iov_base: slice.as_ptr() as *mut libc::c_void,
-                    iov_len: slice.len(),
+                    iov_base: ptr as *mut libc::c_void,
+                    iov_len: len as usize,
                 },
                 PhantomData,
             ),
@@ -380,8 +380,8 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
             inner: {
                 core::slice::from_raw_parts(
-                    slice.as_ptr() as *const I::DerefTargetItem,
-                    slice.len(),
+                    ptr as *const I::DerefTargetItem,
+                    len,
                 )
             },
 
@@ -951,7 +951,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
         return self.inner.0.buf as *mut u8;
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-        return self.inner.as_ptr();
+        return self.inner.as_ptr() as *mut u8;
     }
     #[inline]
     fn __len(&self) -> usize {
@@ -978,7 +978,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = unsafe { core::slice::from_raw_parts_mut(ptr, self.__len()) };
+            self.inner = core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, self.__len());
         }
     }
     #[inline]
@@ -997,7 +997,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
 
         #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         {
-            self.inner = unsafe { core::slice::from_raw_parts_mut(self.__ptr(), len) };
+            self.inner = core::slice::from_raw_parts_mut(self.__ptr() as *mut I::DerefTargetItem, len);
         }
     }
     #[inline]
@@ -1023,7 +1023,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
                 PhantomData,
             ),
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: unsafe {
+            inner: {
                 core::slice::from_raw_parts_mut(
                     ptr as *mut I::DerefTargetItem,
                     len,
@@ -1672,8 +1672,6 @@ pub use io_box::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use core::mem;
 
     const FIRST: &[u8] = b"this";
     const SECOND: &[u8] = b"is";

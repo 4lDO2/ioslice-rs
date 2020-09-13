@@ -16,7 +16,7 @@
 //! regardless of the features used.
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(min_const_generics))]
+#![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]
 
 mod private {
     pub trait Sealed {}
@@ -67,10 +67,10 @@ extern crate alloc;
 #[derive(Clone, Copy)]
 pub struct IoSlice<'a, I: Initialization = Initialized> {
     #[cfg(all(unix, feature = "libc"))]
-    inner: (libc::iovec, PhantomData<&'a [u8]>),
+    inner: (libc::iovec, PhantomData<&'a [I::DerefTargetItem]>),
 
     #[cfg(not(all(unix, feature = "libc")))]
-    inner: &'a [u8],
+    inner: &'a [I::DerefTargetItem],
 
     _marker: PhantomData<I>,
 }
@@ -106,7 +106,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
                 PhantomData,
             ),
             #[cfg(not(all(unix, feature = "libc")))]
-            inner: slice,
+            inner: unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const I::DerefTargetItem, slice.len()) },
 
             _marker: PhantomData,
         }
@@ -122,7 +122,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     pub fn to_uninit(self) -> IoSlice<'a, Uninitialized> {
         IoSlice {
             #[cfg(all(unix, feature = "libc"))]
-            inner: self.inner,
+            inner: (self.inner.0, PhantomData),
 
             #[cfg(not(all(unix, feature = "libc")))]
             inner: unsafe { core::slice::from_raw_parts(self.inner.as_ptr() as *const MaybeUninit<u8>, self.inner.len()) },
@@ -145,8 +145,9 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
                 iov_base: self.inner.0.iov_base,
                 iov_len: self.inner.0.iov_len,
             }, PhantomData),
+
             #[cfg(not(all(unix, feature = "libc")))]
-            inner: unsafe { core::slice::from_raw_parts(self.inner.as_ptr() as *const u8, self.inner.len()) },
+            inner: core::slice::from_raw_parts(self.inner.as_ptr() as *const u8, self.inner.len()),
 
             _marker: PhantomData,
         }
@@ -276,6 +277,10 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
                 iov_base: inner_data.as_ptr() as *mut libc::c_void,
                 iov_len: inner_data.len(),
             }, PhantomData),
+
+            #[cfg(not(all(unix, feature = "libc")))]
+            inner: inner_data,
+
             _marker: PhantomData,
         }
     }
@@ -349,41 +354,55 @@ impl<'a, I: Initialization> ops::Deref for IoSlice<'a, I> {
         self.inner_data()
     }
 }
-impl<'a, I: Initialization> From<&'a [u8]> for IoSlice<'a, I> {
+impl<'a, I: Initialization> From<&'a [I::DerefTargetItem]> for IoSlice<'a, I> {
     #[inline]
-    fn from(slice: &'a [u8]) -> Self {
-        Self::new(slice)
+    fn from(slice: &'a [I::DerefTargetItem]) -> Self {
+        Self::from_inner_data(slice)
     }
 }
-impl<'a, I: Initialization> From<&'a mut [u8]> for IoSlice<'a, I> {
+impl<'a, I: Initialization> From<&'a mut [I::DerefTargetItem]> for IoSlice<'a, I> {
     #[inline]
-    fn from(slice: &'a mut [u8]) -> Self {
-        Self::new(&*slice)
+    fn from(slice: &'a mut [I::DerefTargetItem]) -> Self {
+        Self::from_inner_data(&*slice)
     }
 }
-impl<'a> From<&'a [MaybeUninit<u8>]> for IoSlice<'a, Uninitialized> {
-    fn from(maybe_uninit_slice: &'a [MaybeUninit<u8>]) -> Self {
-        Self::from_inner_data(maybe_uninit_slice)
+impl<'a> From<&'a [u8]> for IoSlice<'a, Uninitialized> {
+    fn from(maybe_uninit_slice: &'a [u8]) -> Self {
+        Self::new(maybe_uninit_slice)
     }
 }
-impl<'a> From<&'a mut [MaybeUninit<u8>]> for IoSlice<'a, Uninitialized> {
-    fn from(maybe_uninit_slice: &'a mut [MaybeUninit<u8>]) -> Self {
-        Self::from_inner_data(&*maybe_uninit_slice)
+impl<'a> From<&'a mut [u8]> for IoSlice<'a, Uninitialized> {
+    fn from(maybe_uninit_slice: &'a mut [u8]) -> Self {
+        Self::new(&*maybe_uninit_slice)
     }
 }
 
 #[cfg(feature = "nightly")]
-impl<'a, I: Initialization, const N: usize> From<&'a [u8; N]> for IoSlice<'a, I> {
+impl<'a, I: Initialization, const N: usize> From<&'a [I::DerefTargetItem; N]> for IoSlice<'a, I> {
     #[inline]
-    fn from(array_ref: &'a [u8; N]) -> Self {
-        Self::from(&array_ref[..])
+    fn from(array_ref: &'a [I::DerefTargetItem; N]) -> Self {
+        Self::from_inner_data(&array_ref[..])
     }
 }
 #[cfg(feature = "nightly")]
-impl<'a, I: Initialization, const N: usize> From<&'a mut [u8; N]> for IoSlice<'a, I> {
+impl<'a, I: Initialization, const N: usize> From<&'a mut [I::DerefTargetItem; N]> for IoSlice<'a, I> {
+    #[inline]
+    fn from(array_ref: &'a mut [I::DerefTargetItem; N]) -> Self {
+        Self::from_inner_data(&array_ref[..])
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> From<&'a [u8; N]> for IoSlice<'a, Uninitialized> {
+    #[inline]
+    fn from(array_ref: &'a [u8; N]) -> Self {
+        Self::new(&array_ref[..])
+    }
+}
+#[cfg(feature = "nightly")]
+impl<'a, const N: usize> From<&'a mut [u8; N]> for IoSlice<'a, Uninitialized> {
     #[inline]
     fn from(array_ref: &'a mut [u8; N]) -> Self {
-        Self::from(&array_ref[..])
+        Self::new(&array_ref[..])
     }
 }
 impl<'a> PartialEq for IoSlice<'a, Initialized> {
@@ -527,10 +546,10 @@ unsafe impl<'a, I: Initialization> stable_deref_trait::StableDeref for IoSlice<'
 #[repr(transparent)]
 pub struct IoSliceMut<'a, I: Initialization = Initialized> {
     #[cfg(all(unix, feature = "libc"))]
-    inner: (libc::iovec, PhantomData<&'a mut [u8]>),
+    inner: (libc::iovec, PhantomData<&'a mut [I::DerefTargetItem]>),
 
     #[cfg(not(all(unix, feature = "libc")))]
-    inner: &'a mut [u8],
+    inner: &'a mut [I::DerefTargetItem],
 
     _marker: PhantomData<I>,
 }
@@ -551,8 +570,8 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// be initialized since its type is [`u8`] and not [`MaybeUninit<u8>`].
     #[inline]
     pub fn new(slice: &'a mut [u8]) -> Self {
-        #[cfg(all(unix, feature = "libc"))]
-        return Self {
+        Self {
+            #[cfg(all(unix, feature = "libc"))]
             inner: (
                 libc::iovec {
                     iov_base: slice.as_mut_ptr() as *mut libc::c_void,
@@ -560,11 +579,11 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
                 },
                 PhantomData,
             ),
-            _marker: PhantomData,
-        };
+            #[cfg(not(all(unix, feature = "libc")))]
+            inner: unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut I::DerefTargetItem, slice.len()) },
 
-        #[cfg(not(all(unix, feature = "libc")))]
-        return Self { inner: slice, _marker: PhantomData };
+            _marker: PhantomData,
+        }
     }
     /// Unsafely cast a possibly uninitialized slice into an initialized slice.
     ///
@@ -578,7 +597,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     pub unsafe fn assume_init(self) -> IoSliceMut<'a, Initialized> {
         IoSliceMut {
             #[cfg(all(unix, feature = "libc"))]
-            inner: self.inner,
+            inner: (self.inner.0, PhantomData),
 
             #[cfg(not(all(unix, feature = "libc")))]
             inner: core::slice::from_raw_parts_mut(self.inner.as_mut_ptr() as *mut u8, self.inner.len()),
@@ -603,10 +622,10 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     pub fn as_uninit(self) -> IoSliceMut<'a, Uninitialized> {
         IoSliceMut {
             #[cfg(all(unix, feature = "libc"))]
-            inner: self.inner,
+            inner: (self.inner.0, PhantomData),
 
             #[cfg(not(all(unix, feature = "libc")))]
-            inner: core::slice::from_raw_parts_mut(self.inner.as_mut_ptr() as *mut MaybeUninit<u8>, self.inner.len()),
+            inner: unsafe { core::slice::from_raw_parts_mut(self.inner.as_mut_ptr() as *mut MaybeUninit<u8>, self.inner.len()) },
 
             _marker: PhantomData,
         }
@@ -771,13 +790,14 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     /// Convert a regular slice that points to either `u8` or `MaybeUninit<u8>`, into
     /// [`IoSliceMut`].
     #[inline]
-    pub fn from_inner_data(inner_data: &mut [I::DerefTargetItem]) -> Self {
+    pub fn from_inner_data(inner_data: &'a mut [I::DerefTargetItem]) -> Self {
         Self {
             #[cfg(all(unix, feature = "libc"))]
             inner: (libc::iovec {
                 iov_base: inner_data.as_mut_ptr() as *mut libc::c_void,
                 iov_len: inner_data.len(),
             }, PhantomData),
+
             #[cfg(not(all(unix, feature = "libc")))]
             inner: inner_data,
 
@@ -974,6 +994,7 @@ impl<'a, 'b> PartialEq<IoSlice<'b, Initialized>> for IoSliceMut<'a, Initialized>
 }
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> PartialEq<[u8; N]> for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn eq(&self, other: &[u8; N]) -> bool {
         self.as_slice() == &other[..]
     }
@@ -981,45 +1002,59 @@ impl<'a, const N: usize> PartialEq<[u8; N]> for IoSliceMut<'a, Initialized> {
 impl<'a> Eq for IoSliceMut<'a, Initialized> {}
 
 impl<'a> PartialOrd for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(Ord::cmp(self, other))
     }
 }
 impl<'a> PartialOrd<[u8]> for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn partial_cmp(&self, other: &[u8]) -> Option<cmp::Ordering> {
         PartialOrd::partial_cmp(self.as_slice(), other)
     }
 }
 impl<'a, 'b> PartialOrd<IoSlice<'b, Initialized>> for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn partial_cmp(&self, other: &IoSlice<'b, Initialized>) -> Option<cmp::Ordering> {
         PartialOrd::partial_cmp(self.as_slice(), other.as_slice())
     }
 }
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> PartialOrd<[u8; N]> for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn partial_cmp(&self, other: &[u8; N]) -> Option<cmp::Ordering> {
         PartialOrd::partial_cmp(self.as_slice(), other)
     }
 }
 impl<'a> Ord for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         Ord::cmp(self.as_slice(), other.as_slice())
     }
 }
 impl<'a> hash::Hash for IoSliceMut<'a, Initialized> {
+    #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         state.write(self.as_slice())
     }
 }
-impl<'a, I: Initialization> From<&'a mut [u8]> for IoSliceMut<'a, I> {
+impl<'a, I: Initialization> From<&'a mut [I::DerefTargetItem]> for IoSliceMut<'a, I> {
+    #[inline]
+    fn from(slice: &'a mut [I::DerefTargetItem]) -> Self {
+        Self::from_inner_data(slice)
+    }
+}
+impl<'a> From<&'a mut [u8]> for IoSliceMut<'a, Uninitialized> {
+    #[inline]
     fn from(slice: &'a mut [u8]) -> Self {
         Self::new(slice)
     }
 }
 #[cfg(feature = "nightly")]
-impl<'a, I: Initialization, const N: usize> From<&'a mut [u8; N]> for IoSliceMut<'a, I> {
-    fn from(slice: &'a mut [u8; N]) -> Self {
-        Self::new(slice)
+impl<'a, I: Initialization, const N: usize> From<&'a mut [I::DerefTargetItem; N]> for IoSliceMut<'a, I> {
+    #[inline]
+    fn from(slice: &'a mut [I::DerefTargetItem; N]) -> Self {
+        Self::from_inner_data(slice)
     }
 }
 
@@ -1302,6 +1337,7 @@ mod io_box {
     impl Eq for IoBox {}
     // TODO: more impls
 }
+#[cfg(feature = "alloc")]
 pub use io_box::*;
 
 #[cfg(test)]

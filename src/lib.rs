@@ -29,7 +29,8 @@
 //!
 //! pub trait MyRead {
 //!     // NOTE: This could be a regular slice as well.
-//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) -> io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)>;
+//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) ->
+//!     io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)>;
 //! }
 //!
 //! impl MyRead for &[u8] {
@@ -58,25 +59,20 @@
 //!
 //! # fn main() -> io::Result<()> {
 //!
-//! let mut tiny_uninit_buf = [MaybeUninit::new(0u8); 4];
-//! let tiny_uninit_buf = IoSliceMut::from_uninit(&mut tiny_uninit_buf);
+//! let mut buf = [MaybeUninit::new(0u8); 32];
+//! let buf = IoSliceMut::from_uninit(&mut buf);
+//! let len = buf.len();
 //!
-//! let mut stupid_text: &[u8] = b"copying is expensive!";
+//! let original_stupid_text: &[u8] = b"copying is expensive!";
+//! let mut stupid_text = original_stupid_text;
 //!
-//! // Read as many bytes as can fit.
-//! let (initialized, remainder) = stupid_text.read(tiny_uninit_buf)?;
-//! dbg!(&initialized);
-//! assert_eq!(initialized, &stupid_text[..4]);
-//!
-//! // Try reading again.
-//! let (initialized, remainder) = stupid_text.read(remainder)?;
-//! dbg!(&initialized);
-//! dbg!(&remainder);
-//! assert_eq!(initialized, &stupid_text[4..8]);
+//! // Read as many bytes as possible.
+//! let (initialized, remainder) = stupid_text.read(buf)?;
+//! assert_eq!(initialized, original_stupid_text);
 //!
 //! // Note that while we cannot read the rest of the buffer, we can still use it as the
 //! // destination of even more I/O, or simply check its length here.
-//! assert_eq!(remainder.len(), stupid_text.len() - 8);
+//! assert_eq!(remainder.len(), len - original_stupid_text.len());
 //!
 //! # Ok(())
 //!
@@ -1959,6 +1955,17 @@ mod tests {
     #[test]
     fn splitting_ioslice_mut() {
         splitting_inner!(IoSliceMut)
+    }
+
+    #[test]
+    fn partially_init_by_copying() {
+        let mut uninitialized_memory = [MaybeUninit::new(0u8); 32];
+        let slice = IoSliceMut::from_uninit(&mut uninitialized_memory);
+
+        let data = *b"this is some data";
+        let (initialized, remainder) = slice.partially_init_by_copying(&data);
+        assert_eq!(&*initialized, data);
+        assert_eq!(remainder.len(), uninitialized_memory.len() - data.len());
     }
 
     #[test]

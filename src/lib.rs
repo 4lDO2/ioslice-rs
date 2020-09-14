@@ -177,7 +177,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub fn cast_to_raw_iovecs(slices: &'a [Self]) -> &'a [libc::iovec] {
-        unsafe { core::slice::from_raw_parts(slices.as_ptr() as *const libc::iovec, slices.len()) }
+        unsafe { cast_slice_same_layout(slices) }
     }
     /// Cast a mutable slice of I/O slices into a mutable slice of iovecs. iovecs share the exact
     /// same ABI guarantees as this wrapper.
@@ -192,7 +192,7 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn cast_to_raw_iovecs_mut(slices: &'a mut [Self]) -> &'a mut [libc::iovec] {
-        core::slice::from_raw_parts_mut(slices.as_mut_ptr() as *mut libc::iovec, slices.len())
+        cast_slice_same_layout_mut(slices)
     }
 
     /// Advance the start offset of an I/O slice, effectively shrinking it from the start.
@@ -410,12 +410,7 @@ impl<'a> IoSlice<'a, Initialized> {
     #[cfg(feature = "std")]
     #[inline]
     pub fn cast_to_std_ioslices<'b>(slices: &'b [Self]) -> &'b [std::io::IoSlice<'a>] {
-        unsafe {
-            core::slice::from_raw_parts(
-                slices.as_ptr() as *const std::io::IoSlice<'a>,
-                slices.len(),
-            )
-        }
+        unsafe { cast_slice_same_layout(slices) }
     }
     /// Cast a mutable slice of I/O slices, into a mutable slice of libstd's [`std::io::IoSlice`].
     /// This is safe since they both must share the same ABI layout as [`libc::iovec`], and since
@@ -425,12 +420,7 @@ impl<'a> IoSlice<'a, Initialized> {
     #[cfg(feature = "std")]
     #[inline]
     pub fn cast_to_std_ioslices_mut(slices: &'a mut [Self]) -> &'a mut [std::io::IoSlice<'a>] {
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                slices.as_mut_ptr() as *mut std::io::IoSlice<'a>,
-                slices.len(),
-            )
-        }
+        unsafe { cast_slice_same_layout_mut(slices) }
     }
 }
 impl<'a, I: Initialization> fmt::Debug for IoSlice<'a, I> {
@@ -782,7 +772,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub fn cast_to_raw_iovecs(slices: &[Self]) -> &[libc::iovec] {
-        unsafe { core::slice::from_raw_parts(slices.as_ptr() as *const libc::iovec, slices.len()) }
+        unsafe { cast_slice_same_layout(slices) }
     }
     /// Unsafely cast a mutable slice of wrapped I/O slices into a mutable slice of
     /// [`libc::iovec`]s.
@@ -794,7 +784,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn cast_to_raw_iovecs_mut(slices: &mut [Self]) -> &mut [libc::iovec] {
-        core::slice::from_raw_parts_mut(slices.as_mut_ptr() as *mut libc::iovec, slices.len())
+        cast_slice_same_layout_mut(slices)
     }
 
     /// Unsafely cast a slice of [`libc::iovec`]s into a slice of [`IoSliceMut`].
@@ -805,7 +795,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn from_raw_iovecs(slice: &[libc::iovec]) -> &[Self] {
-        core::slice::from_raw_parts(slice.as_ptr() as *const Self, slice.len())
+        cast_slice_same_layout(slice)
     }
     /// Unsafely cast a mutable slice of [`libc::iovec`]s into a mutable slice of [`IoSliceMut`].
     ///
@@ -815,7 +805,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn from_raw_iovecs_mut(slice: &mut [libc::iovec]) -> &mut [Self] {
-        core::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut Self, slice.len())
+        cast_slice_same_layout_mut(slice)
     }
     /// Advance the start offset of a single slice by `count` bytes, reducing the length as well.
     ///
@@ -1040,7 +1030,7 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`to_slice`]: #method.to_slice
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.__ptr() as *const u8, self.__len()) }
+        unsafe { cast_slice_same_layout(self.inner_data()) }
     }
     /// Take an [`IoSliceMut`] by value, turning it into an immutable byte slice of lifetime `'a`.
     #[inline]
@@ -1055,7 +1045,7 @@ impl<'a> IoSliceMut<'a, Initialized> {
     /// [`into_slice_mut`]: #method.into_slice_mut
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.__ptr(), self.__len()) }
+        unsafe { cast_slice_same_layout_mut(self.inner_data_mut()) }
     }
 
     /// Take an [`IoSliceMut`] by value, turning it into a mutable byte slice of lifetime `'a`.
@@ -1070,32 +1060,20 @@ impl<'a> IoSliceMut<'a, Initialized> {
     #[cfg(feature = "std")]
     #[inline]
     pub fn cast_to_std_ioslices<'b>(slices: &'b [Self]) -> &'b [std::io::IoSlice<'a>] {
-        unsafe {
-            core::slice::from_raw_parts(
-                slices.as_ptr() as *const std::io::IoSlice<'a>,
-                slices.len(),
-            )
-        }
+        unsafe { cast_slice_same_layout(slices) }
     }
 
     /// Cast `&[IoSliceMut]` to `&[std::io::IoSliceMut]`.
     #[cfg(feature = "std")]
     #[inline]
     pub fn cast_to_std_mut_ioslices<'b>(slices: &'b [Self]) -> &'b [std::io::IoSliceMut<'a>] {
-        unsafe {
-            core::slice::from_raw_parts(slices.as_ptr() as *const std::io::IoSliceMut, slices.len())
-        }
+        unsafe { cast_slice_same_layout(slices) }
     }
     /// Cast `&mut [IoSliceMut]` to `&mut [std::io::IoSlice]`.
     #[cfg(feature = "std")]
     #[inline]
     pub fn cast_to_std_ioslices_mut<'b>(slices: &'b mut [Self]) -> &'b mut [std::io::IoSlice<'a>] {
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                slices.as_mut_ptr() as *mut std::io::IoSlice<'a>,
-                slices.len(),
-            )
-        }
+        unsafe { cast_slice_same_layout_mut(slices) }
     }
 
     /// Cast `&mut [IoSliceMut]` to `&mut [std::io::IoSliceMut]`.
@@ -1104,12 +1082,7 @@ impl<'a> IoSliceMut<'a, Initialized> {
     pub fn cast_to_std_mut_ioslices_mut(
         slices: &'a mut [Self],
     ) -> &'a mut [std::io::IoSliceMut<'a>] {
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                slices.as_mut_ptr() as *mut std::io::IoSliceMut<'a>,
-                slices.len(),
-            )
-        }
+        unsafe { cast_slice_same_layout_mut(slices) }
     }
 }
 
@@ -1326,7 +1299,7 @@ mod io_box {
                 return Err(AllocationError(layout));
             }
 
-            Ok(unsafe { IoBox::from_raw_parts(pointer, length) })
+            Ok(unsafe { IoBox::from_raw_parts(pointer as *mut J::DerefTargetItem, length) })
         }
         /// Attempt to allocate `length` bytes, which are initially set to zero.
         ///
@@ -1387,7 +1360,7 @@ mod io_box {
         /// For this to be safe, the validity and initialization invariants must be held. In
         /// addition to that, the pointer must be allocated using the system allocator.
         #[inline]
-        pub unsafe fn from_raw_parts(base: *mut u8, len: usize) -> Self {
+        pub unsafe fn from_raw_parts(base: *mut I::DerefTargetItem, len: usize) -> Self {
             #[cfg(all(unix, feature = "libc"))]
             return {
                 Self {
@@ -1418,7 +1391,12 @@ mod io_box {
             #[cfg(all(unix, feature = "libc"))]
             return {
                 let (ptr, len) = self.into_raw_parts();
-                unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, len)) }
+                unsafe {
+                    Box::from_raw(core::slice::from_raw_parts_mut(
+                        ptr as *mut I::DerefTargetItem,
+                        len,
+                    ))
+                }
             };
 
             #[cfg(not(all(unix, feature = "libc")))]
@@ -1456,19 +1434,19 @@ mod io_box {
         }
         #[inline]
         pub fn cast_to_ioslices(these: &[Self]) -> &[IoSlice<I>] {
-            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSlice<I>, these.len()) }
+            unsafe { cast_slice_same_layout(these) }
         }
         #[inline]
         pub unsafe fn cast_to_ioslices_mut(these: &mut [Self]) -> &mut [IoSlice<I>] {
-            core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSlice<I>, these.len())
+            cast_slice_same_layout_mut(these)
         }
         #[inline]
         pub fn cast_to_mut_ioslices(these: &[Self]) -> &[IoSliceMut<I>] {
-            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSliceMut<I>, these.len()) }
+            unsafe { cast_slice_same_layout(these) }
         }
         #[inline]
         pub unsafe fn cast_to_mut_ioslices_mut(these: &mut [Self]) -> &mut [IoSliceMut<I>] {
-            core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSliceMut<I>, these.len())
+            cast_slice_same_layout_mut(these)
         }
         /// Convert `IoBox<_>` into `IoBox<Initialized>`, assuming that the data is initialized.
         ///
@@ -1490,21 +1468,11 @@ mod io_box {
         }
         #[inline]
         pub fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.inner_data().as_ptr() as *const MaybeUninit<u8>,
-                    self.inner_data().len(),
-                )
-            }
+            unsafe { cast_slice_same_layout(self.inner_data()) }
         }
         #[inline]
         pub fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.inner_data_mut().as_mut_ptr() as *mut MaybeUninit<u8>,
-                    self.inner_data_mut().len(),
-                )
-            }
+            unsafe { cast_slice_same_layout_mut(self.inner_data_mut()) }
         }
 
         pub fn zeroed(mut self) -> IoBox<Initialized> {
@@ -1558,28 +1526,41 @@ mod io_box {
     }
     impl<I: Initialization> From<Box<[I::DerefTargetItem]>> for IoBox<I> {
         fn from(boxed: Box<[I::DerefTargetItem]>) -> Self {
-            Self {
-                #[cfg(all(unix, feature = "libc"))]
-                inner: {
-                    let slice_ptr = Box::into_raw(boxed);
+            unsafe {
+                let slice_ptr = Box::into_raw(boxed);
 
-                    // TODO: #![feature(slice_ptr_len)]
-                    //let iov_len = slice_ptr.len();
+                // TODO: #![feature(slice_ptr_len)]
+                //let iov_len = slice_ptr.len();
 
-                    let iov_len = unsafe { &*slice_ptr }.len();
-                    let iov_base = unsafe { &*slice_ptr }.as_ptr() as *mut libc::c_void;
+                let len = (&*slice_ptr).len();
+                let base = (&*slice_ptr).as_ptr() as *mut I::DerefTargetItem;
 
-                    libc::iovec { iov_base, iov_len }
-                },
-                #[cfg(not(all(unix, feature = "libc")))]
-                inner: boxed,
+                Self::from_raw_parts(base, len)
+            }
+        }
+    }
+    impl From<Box<[u8]>> for IoBox<Uninitialized> {
+        fn from(boxed: Box<[u8]>) -> Self {
+            unsafe {
+                let slice_ptr = Box::into_raw(boxed);
 
-                _marker: PhantomData,
+                // TODO: #![feature(slice_ptr_len)]
+                //let iov_len = slice_ptr.len();
+
+                let len = (&*slice_ptr).len();
+                let base = (&*slice_ptr).as_ptr() as *mut MaybeUninit<u8>;
+
+                Self::from_raw_parts(base, len)
             }
         }
     }
     impl<I: Initialization> From<Vec<I::DerefTargetItem>> for IoBox<I> {
         fn from(vector: Vec<I::DerefTargetItem>) -> Self {
+            Self::from(vector.into_boxed_slice())
+        }
+    }
+    impl From<Vec<u8>> for IoBox<Uninitialized> {
+        fn from(vector: Vec<u8>) -> Self {
             Self::from(vector.into_boxed_slice())
         }
     }
@@ -1610,14 +1591,14 @@ mod io_box {
             self.as_slice_mut()
         }
     }
-    impl AsRef<[u8]> for IoBox {
-        fn as_ref(&self) -> &[u8] {
-            self.as_slice()
+    impl<I: Initialization> AsRef<[I::DerefTargetItem]> for IoBox<I> {
+        fn as_ref(&self) -> &[I::DerefTargetItem] {
+            self.inner_data()
         }
     }
-    impl AsMut<[u8]> for IoBox {
-        fn as_mut(&mut self) -> &mut [u8] {
-            self.as_slice_mut()
+    impl<I: Initialization> AsMut<[I::DerefTargetItem]> for IoBox<I> {
+        fn as_mut(&mut self) -> &mut [I::DerefTargetItem] {
+            self.inner_data_mut()
         }
     }
     impl core::borrow::Borrow<[u8]> for IoBox {
@@ -1832,4 +1813,59 @@ mod tests {
         assert!(Iterator::eq(src_iter, dst_iter));
     }
     // TODO: Make IoSlice compatible with WSABUF without std as well.
+}
+
+#[inline]
+unsafe fn cast_slice_same_layout<A, B>(a: &[A]) -> &[B] {
+    core::slice::from_raw_parts(a.as_ptr() as *const B, a.len())
+}
+#[inline]
+unsafe fn cast_slice_same_layout_mut<A, B>(a: &mut [A]) -> &mut [B] {
+    core::slice::from_raw_parts_mut(a.as_mut_ptr() as *mut B, a.len())
+}
+
+/// Cast a slice of bytes into a slice of uninitialized bytes, pretending that it is uninitialized.
+/// This is completely safe, since `MaybeUninit` must have the exact same (direct) layout, like
+/// `u8` has. The downside with this is that the information about initializedness is lost; unless
+/// relying on unsafe code, the resulting slice can only be used to prove validity of the memory
+/// range.
+#[inline]
+pub fn cast_init_to_uninit_slice(init: &[u8]) -> &[MaybeUninit<u8>] {
+    unsafe { cast_slice_same_layout(init) }
+}
+/// Cast a possibly uninitialized slice of bytes, into an initializied slice, assuming that it is
+/// initialized.
+///
+/// # Safety
+///
+/// The initialization variant must be upheld; that is, the caller must ensure that the buffer
+/// cannot contain any uninitialized data.
+#[inline]
+pub unsafe fn cast_uninit_to_init_slice(uninit: &[MaybeUninit<u8>]) -> &[u8] {
+    cast_slice_same_layout(uninit)
+}
+
+/// Cast a mutable slice of bytes into a slice of uninitialized bytes, pretending that it is
+/// uninitialized. This is completely safe since they always have the same memory layout; however,
+/// the layout of the slices themselves must not be relied upon. The initializedness information is
+/// lost as part of this cast, but can be recovered when initializing again or by using unsafe
+/// code.
+#[inline]
+pub fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    unsafe { cast_slice_same_layout_mut(init) }
+}
+/// Cast a mutable slice of possibly initialized bytes into a slice of initialized bytes, assuming
+/// it is initialized.
+///
+/// # Safety
+///
+/// For this to be safe, the initialization invariant must be upheld, exactly like when reading.
+///
+/// __This must not be used for initializing the buffer. For that, there are are other safe methods
+/// like [`init_from_slice`] and [`init_by_filling`]. If unsafe code is still somehow, always initialize this by
+/// copying from _another_ MaybeUninit slice, or using [`std::ptr::copy`] or
+/// [`std::ptr::copy_nonoverlapping`].__
+#[inline]
+pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
+    cast_slice_same_layout_mut(uninit)
 }

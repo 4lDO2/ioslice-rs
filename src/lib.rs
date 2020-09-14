@@ -21,26 +21,74 @@
 //! ```
 //! # use std::io;
 //!
+//! use std::mem::MaybeUninit;
+//!
 //! use ioslice::{Initialization, Initialized, IoSliceMut, SliceMutPartialExt};
 //!
 //! # // TODO: Add more safe abstractions for slices of I/O slices.
 //!
 //! pub trait MyRead {
 //!     // NOTE: This could be a regular slice as well.
-//!     fn read<I: Initialization>(&mut self, slice: IoSliceMut<I>) -> io::Result<(IoSliceMut<Initialized>, IoSliceMut<I>)>;
+//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) -> io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)>;
 //! }
 //!
-//! impl MyRead for [u8] {
-//!     fn read<I: Initialization>(&mut self, slice: IoSliceMut<I>) ->
-//!     io::Result<(IoSliceMut<Initialized>, IoSliceMut<I>)> {
+//! impl MyRead for &[u8] {
+//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) ->
+//!     io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)> {
+//!         // Begin with taking the minimum slice that can fit the copy into the buffer.
+//!         let bytes_to_copy = std::cmp::min(self.len(), slice.len());
+//!         let (source, source_remainder) = self.split_at(bytes_to_copy);
 //!
-//!         let (initialized, remainder) = slice.partially_init_by_copying(self);
+//!         // Split the possibly uninitialized slice into an initialized and an uninitialized
+//!         // part. This allows the `Read` implementation to only read part of the data requested.
+//!         //
+//!         // Normally this would be done via returning `usize`, but we need to be able to prove
+//!         // that we have initialized it.
+//!         let (initialized, remainder) = slice.partially_init_by_copying(source);
 //!
+//!         // Advance the slice that is being read.
 //!         let bytes_copied = initialized.len();
-//!         self = &mut self[..bytes_copied];
+//!         *self = source_remainder;
+//!
+//!         // And finally, return the initialized part and the remainder to prove that we have
+//!         // initialized it. (And to make it possible for safe code to use the buffer directly.)
+//!         Ok((initialized, remainder))
 //!     }
 //! }
+//!
+//! # fn main() -> io::Result<()> {
+//!
+//! let mut tiny_uninit_buf = [MaybeUninit::new(0u8); 4];
+//! let tiny_uninit_buf = IoSliceMut::from_uninit(&mut tiny_uninit_buf);
+//!
+//! let mut stupid_text: &[u8] = b"copying is expensive!";
+//!
+//! // Read as many bytes as can fit.
+//! let (initialized, remainder) = stupid_text.read(tiny_uninit_buf)?;
+//! dbg!(&initialized);
+//! assert_eq!(initialized, &stupid_text[..4]);
+//!
+//! // Try reading again.
+//! let (initialized, remainder) = stupid_text.read(remainder)?;
+//! dbg!(&initialized);
+//! dbg!(&remainder);
+//! assert_eq!(initialized, &stupid_text[4..8]);
+//!
+//! // Note that while we cannot read the rest of the buffer, we can still use it as the
+//! // destination of even more I/O, or simply check its length here.
+//! assert_eq!(remainder.len(), stupid_text.len() - 8);
+//!
+//! # Ok(())
+//!
+//! # }
+//!
 //! ```
+//!
+//! Note that this may not be the best implementation of the `Read` trait, but it does show that
+//! uninitialized memory handling can be done entirely in safe code, being moderately ergonomic.
+//!
+//! (If this would be incorporated into `std::io::Read`, there would probably be a simpler unsafe
+//! function, that defaults to the safer wrapper.)
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]
@@ -414,6 +462,12 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
 
             _marker: PhantomData,
         }
+    }
+
+    #[inline]
+    pub fn split_at(self, mid: usize) -> (Self, Self) {
+        let (a, b) = self.inner_data().split_at(mid);
+        (Self::from_inner_data(a), Self::from_inner_data(b))
     }
 }
 impl<'a> IoSlice<'a, Initialized> {
@@ -1060,6 +1114,17 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
             _marker: PhantomData,
         }
     }
+    #[inline]
+    pub fn split_at(self, mid: usize) -> (Self, Self) {
+        let (a, b) = self.into_inner_data().split_at_mut(mid);
+        (Self::from_inner_data(a), Self::from_inner_data(b))
+    }
+}
+impl<'a> IoSliceMut<'a, Uninitialized> {
+    /// Create an uninitialized mutable I/O slice from a regular uninitialized mutable byte slice.
+    pub fn from_uninit(uninit: &'a mut [MaybeUninit<u8>]) -> Self {
+        Self::from_inner_data(uninit)
+    }
 }
 impl<'a> IoSliceMut<'a, Initialized> {
     /// Retrieve the inner slice immutably. This requires the I/O slice to be initialized.
@@ -1224,6 +1289,12 @@ impl<'a> PartialEq<[u8]> for IoSliceMut<'a, Initialized> {
     #[inline]
     fn eq(&self, other: &[u8]) -> bool {
         self.as_slice() == other
+    }
+}
+impl<'a, 'b> PartialEq<&'b [u8]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn eq(&self, other: &&'b [u8]) -> bool {
+        self.as_slice() == *other
     }
 }
 impl<'a, 'b> PartialEq<IoSlice<'b, Initialized>> for IoSliceMut<'a, Initialized> {
@@ -1868,6 +1939,28 @@ mod tests {
         assert_eq!(IoSlice::advance_within(ioslices, 1), None);
     }
 
+    macro_rules! splitting_inner(
+        ($slice:ident) => {{
+            let mut buf: [u8; 13] = *b"Hello, world!";
+
+            let full = $slice::<Initialized>::new(&mut buf);
+            let (first, remainder) = full.split_at(4);
+            assert_eq!(&*first, b"Hell");
+
+            let (second, third) = remainder.split_at(5);
+            assert_eq!(&*second, b"o, wo");
+            assert_eq!(&*third, b"rld!");
+        }}
+    );
+    #[test]
+    fn splitting_ioslice() {
+        splitting_inner!(IoSlice)
+    }
+    #[test]
+    fn splitting_ioslice_mut() {
+        splitting_inner!(IoSliceMut)
+    }
+
     #[test]
     #[cfg(feature = "std")]
     fn abi_compatibility_with_std() {
@@ -2173,6 +2266,12 @@ unsafe impl<'a> SliceMut for &'a mut [MaybeUninit<u8>] {
     #[inline]
     unsafe fn assume_init(self) -> Self::Initialized {
         cast_uninit_to_init_slice_mut(self)
+    }
+}
+unsafe impl<'a, I: Initialization> SliceMutPartial for IoSliceMut<'a, I> {
+    fn split_at(self, n: usize) -> (Self, Self) {
+        #[forbid(unconditional_recursion)]
+        IoSliceMut::split_at(self, n)
     }
 }
 unsafe impl<'a> SliceMutPartial for &'a mut [u8] {

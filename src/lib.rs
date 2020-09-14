@@ -1403,6 +1403,7 @@ mod io_box {
             return {
                 Self {
                     inner: Box::from_raw(core::slice::from_raw_parts_mut(base, len)),
+                    _marker: PhantomData,
                 }
             };
         }
@@ -1413,11 +1414,11 @@ mod io_box {
             iovec
         }
 
-        pub fn into_box(self) -> Box<[u8]> {
+        pub fn into_box(self) -> Box<[I::DerefTargetItem]> {
             #[cfg(all(unix, feature = "libc"))]
             return {
                 let (ptr, len) = self.into_raw_parts();
-                unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr, len)) }
+                unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr as *mut I::DerefTargetItem, len)) }
             };
 
             #[cfg(not(all(unix, feature = "libc")))]
@@ -1454,24 +1455,20 @@ mod io_box {
             return &mut *self.inner;
         }
         #[inline]
-        pub fn slice_as_ioslices(these: &[Self]) -> &[IoSlice] {
-            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSlice, these.len()) }
+        pub fn cast_to_ioslices(these: &[Self]) -> &[IoSlice<I>] {
+            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSlice<I>, these.len()) }
         }
         #[inline]
-        pub fn slice_as_ioslices_mut(these: &mut [Self]) -> &mut [IoSlice] {
-            unsafe {
-                core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSlice, these.len())
-            }
+        pub unsafe fn cast_to_ioslices_mut(these: &mut [Self]) -> &mut [IoSlice<I>] {
+            core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSlice<I>, these.len())
         }
         #[inline]
-        pub fn slice_as_mut_ioslices(these: &[Self]) -> &[IoSliceMut] {
-            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSliceMut, these.len()) }
+        pub fn cast_to_mut_ioslices(these: &[Self]) -> &[IoSliceMut<I>] {
+            unsafe { core::slice::from_raw_parts(these.as_ptr() as *const IoSliceMut<I>, these.len()) }
         }
         #[inline]
-        pub fn slice_as_mut_ioslices_mut(these: &mut [Self]) -> &mut [IoSliceMut] {
-            unsafe {
-                core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSliceMut, these.len())
-            }
+        pub unsafe fn cast_to_mut_ioslices_mut(these: &mut [Self]) -> &mut [IoSliceMut<I>] {
+            core::slice::from_raw_parts_mut(these.as_mut_ptr() as *mut IoSliceMut<I>, these.len())
         }
         /// Convert `IoBox<_>` into `IoBox<Initialized>`, assuming that the data is initialized.
         ///
@@ -1559,8 +1556,8 @@ mod io_box {
             }
         }
     }
-    impl From<Box<[u8]>> for IoBox {
-        fn from(boxed: Box<[u8]>) -> Self {
+    impl<I: Initialization> From<Box<[I::DerefTargetItem]>> for IoBox<I> {
+        fn from(boxed: Box<[I::DerefTargetItem]>) -> Self {
             Self {
                 #[cfg(all(unix, feature = "libc"))]
                 inner: {
@@ -1581,8 +1578,8 @@ mod io_box {
             }
         }
     }
-    impl From<Vec<u8>> for IoBox {
-        fn from(vector: Vec<u8>) -> Self {
+    impl<I: Initialization> From<Vec<I::DerefTargetItem>> for IoBox<I> {
+        fn from(vector: Vec<I::DerefTargetItem>) -> Self {
             Self::from(vector.into_boxed_slice())
         }
     }

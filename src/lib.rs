@@ -443,10 +443,22 @@ impl<'a, I: Initialization> AsRef<[I::DerefTargetItem]> for IoSlice<'a, I> {
         self.inner_data()
     }
 }
+impl<'a> AsRef<[MaybeUninit<u8>]> for IoSlice<'a, Initialized> {
+    #[inline]
+    fn as_ref(&self) -> &[MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice()
+    }
+}
 impl<'a, I: Initialization> Borrow<[I::DerefTargetItem]> for IoSlice<'a, I> {
     #[inline]
     fn borrow(&self) -> &[I::DerefTargetItem] {
         self.inner_data()
+    }
+}
+impl<'a> Borrow<[MaybeUninit<u8>]> for IoSlice<'a, Initialized> {
+    #[inline]
+    fn borrow(&self) -> &[MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice()
     }
 }
 impl<'a, I: Initialization> ops::Deref for IoSlice<'a, I> {
@@ -719,11 +731,13 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
     /// Cast an I/O slice, being [`Initialized`] or not, into an [`Uninitialized`] I/O slice, by
     /// reference.
+    #[inline]
     pub fn as_uninit(&self) -> &IoSliceMut<'a, Uninitialized> {
         unsafe { &*(self as *const Self as *const IoSliceMut<'a, Uninitialized>) }
     }
     /// Cast an I/O slice, being [`Initialized`] or not, into an [`Uninitialized`] I/O slice, by
     /// mutable reference.
+    #[inline]
     pub fn as_uninit_mut(&mut self) -> &mut IoSliceMut<'a, Uninitialized> {
         unsafe { &mut *(self as *mut Self as *mut IoSliceMut<'a, Uninitialized>) }
     }
@@ -1092,10 +1106,22 @@ impl<'a, I: Initialization> AsRef<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
         self.inner_data()
     }
 }
+impl<'a> AsRef<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn as_ref(&self) -> &[MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice()
+    }
+}
 impl<'a, I: Initialization> Borrow<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
     #[inline]
     fn borrow(&self) -> &[I::DerefTargetItem] {
         self.inner_data()
+    }
+}
+impl<'a> Borrow<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn borrow(&self) -> &[MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice()
     }
 }
 impl<'a, I: Initialization> ops::Deref for IoSliceMut<'a, I> {
@@ -1112,10 +1138,22 @@ impl<'a, I: Initialization> AsMut<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
         self.inner_data_mut()
     }
 }
+impl<'a> AsMut<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice_mut()
+    }
+}
 impl<'a, I: Initialization> BorrowMut<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
     #[inline]
     fn borrow_mut(&mut self) -> &mut [I::DerefTargetItem] {
         self.inner_data_mut()
+    }
+}
+impl<'a> BorrowMut<[MaybeUninit<u8>]> for IoSliceMut<'a> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.as_maybe_uninit_slice_mut()
     }
 }
 impl<'a, I: Initialization> ops::DerefMut for IoSliceMut<'a, I> {
@@ -1268,6 +1306,7 @@ mod io_box {
 
     impl AllocationError {
         /// Retrieve the layout that the allocator failed to allocate.
+        #[inline]
         pub fn layout(&self) -> &Layout {
             &self.0
         }
@@ -1277,7 +1316,6 @@ mod io_box {
         // TODO: While really niche (except maybe for O_DIRECT where buffers need to be
         // page-aligned?), one should also be able to directly specify a layout.
 
-        #[inline]
         fn try_alloc_inner<J: Initialization>(
             length: usize,
             zeroed: bool,
@@ -1387,6 +1425,7 @@ mod io_box {
             iovec
         }
 
+        #[inline]
         pub fn into_box(self) -> Box<[I::DerefTargetItem]> {
             #[cfg(all(unix, feature = "libc"))]
             return {
@@ -1402,12 +1441,15 @@ mod io_box {
             #[cfg(not(all(unix, feature = "libc")))]
             return { io_box.inner };
         }
+        #[inline]
         pub fn as_ioslice(&self) -> IoSlice<I> {
             IoSlice::from_inner_data(self.inner_data())
         }
+        #[inline]
         pub fn as_ioslice_mut(&mut self) -> IoSliceMut<I> {
             IoSliceMut::from_inner_data(self.inner_data_mut())
         }
+        #[inline]
         pub fn inner_data(&self) -> &[I::DerefTargetItem] {
             #[cfg(all(unix, feature = "libc"))]
             return unsafe {
@@ -1420,6 +1462,7 @@ mod io_box {
             #[cfg(not(all(unix, feature = "libc")))]
             return &*self.inner;
         }
+        #[inline]
         pub fn inner_data_mut(&mut self) -> &mut [I::DerefTargetItem] {
             #[cfg(all(unix, feature = "libc"))]
             return unsafe {
@@ -1475,6 +1518,7 @@ mod io_box {
             unsafe { cast_slice_same_layout_mut(self.inner_data_mut()) }
         }
 
+        #[inline]
         pub fn zeroed(mut self) -> IoBox<Initialized> {
             #[cfg(feature = "nightly")]
             {
@@ -1488,20 +1532,37 @@ mod io_box {
             }
             unsafe { self.assume_init() }
         }
+        #[inline]
         pub fn try_alloc_uninit(length: usize) -> Result<IoBox<Uninitialized>, AllocationError> {
             Self::try_alloc_inner(length, false)
         }
+        #[inline]
         pub fn alloc_uninit(length: usize) -> IoBox<Uninitialized> {
             match Self::try_alloc_uninit(length) {
                 Ok(boxed) => boxed,
                 Err(AllocationError(layout)) => alloc::alloc::handle_alloc_error(layout),
             }
         }
+
+        #[inline]
+        pub fn into_uninit(self) -> IoBox<Uninitialized> {
+            unsafe {
+                let (ptr, len) = self.into_raw_parts();
+                IoBox::from_raw_parts(ptr as *mut MaybeUninit<u8>, len)
+            }
+        }
+
+        #[inline]
+        pub fn into_uninit_box(self) -> Box<[MaybeUninit<u8>]> {
+            self.into_uninit().into_box()
+        }
     }
     impl IoBox<Initialized> {
+        #[inline]
         pub fn as_slice(&self) -> &[u8] {
             self.inner_data()
         }
+        #[inline]
         pub fn as_slice_mut(&mut self) -> &mut [u8] {
             self.inner_data_mut()
         }
@@ -1525,6 +1586,7 @@ mod io_box {
         }
     }
     impl<I: Initialization> From<Box<[I::DerefTargetItem]>> for IoBox<I> {
+        #[inline]
         fn from(boxed: Box<[I::DerefTargetItem]>) -> Self {
             unsafe {
                 let slice_ptr = Box::into_raw(boxed);
@@ -1540,6 +1602,7 @@ mod io_box {
         }
     }
     impl From<Box<[u8]>> for IoBox<Uninitialized> {
+        #[inline]
         fn from(boxed: Box<[u8]>) -> Self {
             unsafe {
                 let slice_ptr = Box::into_raw(boxed);
@@ -1555,40 +1618,59 @@ mod io_box {
         }
     }
     impl<I: Initialization> From<Vec<I::DerefTargetItem>> for IoBox<I> {
+        #[inline]
         fn from(vector: Vec<I::DerefTargetItem>) -> Self {
             Self::from(vector.into_boxed_slice())
         }
     }
     impl From<Vec<u8>> for IoBox<Uninitialized> {
+        #[inline]
         fn from(vector: Vec<u8>) -> Self {
             Self::from(vector.into_boxed_slice())
         }
     }
-    impl From<IoBox> for Box<[u8]> {
-        fn from(io_box: IoBox) -> Self {
+    impl<I: Initialization> From<IoBox<I>> for Box<[I::DerefTargetItem]> {
+        #[inline]
+        fn from(io_box: IoBox<I>) -> Self {
             io_box.into_box()
         }
     }
-    impl From<IoBox> for Vec<u8> {
-        fn from(io_box: IoBox) -> Self {
+    impl From<IoBox<Initialized>> for Box<[MaybeUninit<u8>]> {
+        #[inline]
+        fn from(io_box: IoBox<Initialized>) -> Self {
+            io_box.into_uninit_box()
+        }
+    }
+    impl<I: Initialization> From<IoBox<I>> for Vec<I::DerefTargetItem> {
+        #[inline]
+        fn from(io_box: IoBox<I>) -> Self {
             Self::from(Box::from(io_box))
         }
     }
+    impl From<IoBox<Initialized>> for Vec<MaybeUninit<u8>> {
+        #[inline]
+        fn from(io_box: IoBox<Initialized>) -> Self {
+            io_box.into_uninit_box().into()
+        }
+    }
     impl core::fmt::Debug for IoBox {
+        #[inline]
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(f, "{:?}", self.as_slice())
         }
     }
-    impl core::ops::Deref for IoBox {
-        type Target = [u8];
+    impl<I: Initialization> core::ops::Deref for IoBox<I> {
+        type Target = [I::DerefTargetItem];
 
-        fn deref(&self) -> &[u8] {
-            self.as_slice()
+        #[inline]
+        fn deref(&self) -> &Self::Target {
+            self.inner_data()
         }
     }
-    impl core::ops::DerefMut for IoBox {
-        fn deref_mut(&mut self) -> &mut [u8] {
-            self.as_slice_mut()
+    impl<I: Initialization> core::ops::DerefMut for IoBox<I> {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.inner_data_mut()
         }
     }
     impl<I: Initialization> AsRef<[I::DerefTargetItem]> for IoBox<I> {
@@ -1861,10 +1943,10 @@ pub fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] 
 ///
 /// For this to be safe, the initialization invariant must be upheld, exactly like when reading.
 ///
-/// __This must not be used for initializing the buffer. For that, there are are other safe methods
-/// like [`init_from_slice`] and [`init_by_filling`]. If unsafe code is still somehow, always initialize this by
-/// copying from _another_ MaybeUninit slice, or using [`std::ptr::copy`] or
-/// [`std::ptr::copy_nonoverlapping`].__
+/// __NOTE: This must not be used for initializing the buffer__. For that, there are are other safe
+/// methods like [`init_from_slice`] and [`init_by_filling`]. If unsafe code is still somehow,
+/// always initialize this by copying from _another_ MaybeUninit slice, or using [`std::ptr::copy`]
+/// or [`std::ptr::copy_nonoverlapping`].
 #[inline]
 pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     cast_slice_same_layout_mut(uninit)

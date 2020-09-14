@@ -437,16 +437,16 @@ impl<'a, I: Initialization> fmt::Debug for IoSlice<'a, I> {
         }
     }
 }
-impl<'a, I: Initialization> AsRef<[I::DerefTargetItem]> for IoSlice<'a, I> {
-    #[inline]
-    fn as_ref(&self) -> &[I::DerefTargetItem] {
-        self.inner_data()
-    }
-}
-impl<'a> AsRef<[MaybeUninit<u8>]> for IoSlice<'a, Initialized> {
+impl<'a, I: Initialization> AsRef<[MaybeUninit<u8>]> for IoSlice<'a, I> {
     #[inline]
     fn as_ref(&self) -> &[MaybeUninit<u8>] {
         self.as_maybe_uninit_slice()
+    }
+}
+impl<'a> AsRef<[u8]> for IoSlice<'a, Initialized> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 impl<'a, I: Initialization> Borrow<[I::DerefTargetItem]> for IoSlice<'a, I> {
@@ -1112,16 +1112,19 @@ impl<'a> AsRef<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
         self.as_maybe_uninit_slice()
     }
 }
-impl<'a, I: Initialization> Borrow<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
-    #[inline]
-    fn borrow(&self) -> &[I::DerefTargetItem] {
-        self.inner_data()
-    }
-}
-impl<'a> Borrow<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
+// TODO: Use #![feature(specialization)] and make sure that there is always an AsRef and Borrow
+// impl for MaybeUninit and u8 regardless of the generic parameter.
+// TODO: What about #![feature(const_generics)] and use an exhaustive enum for the type markers?
+impl<'a, I: Initialization> Borrow<[MaybeUninit<u8>]> for IoSliceMut<'a, I> {
     #[inline]
     fn borrow(&self) -> &[MaybeUninit<u8>] {
         self.as_maybe_uninit_slice()
+    }
+}
+impl<'a> Borrow<[u8]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn borrow(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 impl<'a, I: Initialization> ops::Deref for IoSliceMut<'a, I> {
@@ -1132,28 +1135,28 @@ impl<'a, I: Initialization> ops::Deref for IoSliceMut<'a, I> {
         self.inner_data()
     }
 }
-impl<'a, I: Initialization> AsMut<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
+impl<'a> AsMut<[u8]> for IoSliceMut<'a, Initialized> {
     #[inline]
-    fn as_mut(&mut self) -> &mut [I::DerefTargetItem] {
-        self.inner_data_mut()
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_slice_mut()
     }
 }
-impl<'a> AsMut<[MaybeUninit<u8>]> for IoSliceMut<'a, Initialized> {
+impl<'a, I: Initialization> AsMut<[MaybeUninit<u8>]> for IoSliceMut<'a, I> {
     #[inline]
     fn as_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.as_maybe_uninit_slice_mut()
     }
 }
-impl<'a, I: Initialization> BorrowMut<[I::DerefTargetItem]> for IoSliceMut<'a, I> {
-    #[inline]
-    fn borrow_mut(&mut self) -> &mut [I::DerefTargetItem] {
-        self.inner_data_mut()
-    }
-}
-impl<'a> BorrowMut<[MaybeUninit<u8>]> for IoSliceMut<'a> {
+impl<'a, I: Initialization> BorrowMut<[MaybeUninit<u8>]> for IoSliceMut<'a, I> {
     #[inline]
     fn borrow_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.as_maybe_uninit_slice_mut()
+    }
+}
+impl<'a> BorrowMut<[u8]> for IoSliceMut<'a, Initialized> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        self.as_slice_mut()
     }
 }
 impl<'a, I: Initialization> ops::DerefMut for IoSliceMut<'a, I> {
@@ -1673,28 +1676,52 @@ mod io_box {
             self.inner_data_mut()
         }
     }
-    impl<I: Initialization> AsRef<[I::DerefTargetItem]> for IoBox<I> {
+    impl<I: Initialization> AsRef<[MaybeUninit<u8>]> for IoBox<I> {
         #[inline]
-        fn as_ref(&self) -> &[I::DerefTargetItem] {
-            self.inner_data()
+        fn as_ref(&self) -> &[MaybeUninit<u8>] {
+            self.as_maybe_uninit_slice()
         }
     }
-    impl<I: Initialization> AsMut<[I::DerefTargetItem]> for IoBox<I> {
+    impl<I: Initialization> AsMut<[MaybeUninit<u8>]> for IoBox<I> {
         #[inline]
-        fn as_mut(&mut self) -> &mut [I::DerefTargetItem] {
-            self.inner_data_mut()
+        fn as_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+            self.as_maybe_uninit_slice_mut()
         }
     }
-    impl<I: Initialization> core::borrow::Borrow<[I::DerefTargetItem]> for IoBox<I> {
+    impl AsRef<[u8]> for IoBox<Initialized> {
         #[inline]
-        fn borrow(&self) -> &[I::DerefTargetItem] {
-            self.inner_data()
+        fn as_ref(&self) -> &[u8] {
+            self.as_slice()
         }
     }
-    impl<I: Initialization> core::borrow::BorrowMut<[I::DerefTargetItem]> for IoBox<I> {
+    impl AsMut<[u8]> for IoBox<Initialized> {
         #[inline]
-        fn borrow_mut(&mut self) -> &mut [I::DerefTargetItem] {
-            self.inner_data_mut()
+        fn as_mut(&mut self) -> &mut [u8] {
+            self.as_slice_mut()
+        }
+    }
+    impl<I: Initialization> core::borrow::Borrow<[MaybeUninit<u8>]> for IoBox<I> {
+        #[inline]
+        fn borrow(&self) -> &[MaybeUninit<u8>] {
+            self.as_maybe_uninit_slice()
+        }
+    }
+    impl<I: Initialization> core::borrow::BorrowMut<[MaybeUninit<u8>]> for IoBox<I> {
+        #[inline]
+        fn borrow_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+            self.as_maybe_uninit_slice_mut()
+        }
+    }
+    impl core::borrow::Borrow<[u8]> for IoBox<Initialized> {
+        #[inline]
+        fn borrow(&self) -> &[u8] {
+            self.as_slice()
+        }
+    }
+    impl core::borrow::BorrowMut<[u8]> for IoBox<Initialized> {
+        #[inline]
+        fn borrow_mut(&mut self) -> &mut [u8] {
+            self.as_slice_mut()
         }
     }
     impl PartialEq for IoBox<Initialized> {
@@ -1723,6 +1750,15 @@ mod io_box {
     }
     impl Eq for IoBox<Initialized> {}
     // TODO: more impls
+
+    unsafe impl<I: Initialization> SliceMut for IoBox<I> {
+        type Initialized = IoBox<Initialized>;
+
+        unsafe fn assume_init(self) -> Self::Initialized {
+            #[forbid(unconditional_recursion)]
+            IoBox::assume_init(self)
+        }
+    }
 }
 #[cfg(all(unix, feature = "alloc"))]
 pub use io_box::*;
@@ -1903,6 +1939,73 @@ mod tests {
         assert!(Iterator::eq(src_iter, dst_iter));
     }
     // TODO: Make IoSlice compatible with WSABUF without std as well.
+}
+
+// TODO: Unfortunately &[u8] does not currently implement AsRef<[MaybeUninit<u8>]>, but in the
+// future we might simply also require AsRef and AsMut.
+pub unsafe trait SliceMut: Sized {
+    type Initialized: AsRef<[u8]> + AsMut<[u8]> + Sized;
+
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>];
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
+
+    unsafe fn assume_init(self) -> Self::Initialized;
+}
+
+unsafe impl<'a, I: Initialization> SliceMut for IoSliceMut<'a, I> {
+    type Initialized = IoSliceMut<'a, Initialized>;
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        #[forbid(unconditional_recursion)]
+        IoSliceMut::as_maybe_uninit_slice(self)
+    }
+    #[inline]
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        #[forbid(unconditional_recursion)]
+        IoSliceMut::as_maybe_uninit_slice_mut(self)
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        #[forbid(unconditional_recursion)]
+        IoSliceMut::assume_init(self)
+    }
+}
+
+unsafe impl<'a> SliceMut for &'a mut [u8] {
+    type Initialized = &'a mut [u8];
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        cast_init_to_uninit_slice(self)
+    }
+    #[inline]
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        cast_init_to_uninit_slice_mut(self)
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        self
+    }
+}
+unsafe impl<'a> SliceMut for &'a mut [MaybeUninit<u8>] {
+    type Initialized = &'a mut [u8];
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        self
+    }
+    #[inline]
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        cast_uninit_to_init_slice_mut(self)
+    }
 }
 
 #[inline]

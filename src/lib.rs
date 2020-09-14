@@ -1482,6 +1482,16 @@ mod io_box {
         pub fn cast_to_ioslices(these: &[Self]) -> &[IoSlice<I>] {
             unsafe { cast_slice_same_layout(these) }
         }
+        /// Cast `&mut [IoBox]` to `&mut [IoSlice]`.
+        ///
+        /// # Safety
+        ///
+        /// To avoid being able to change the pointers, which are likely going to be deallocated in
+        /// this `Drop` code, unless they are changed back, this is marked as "unsafe".
+        ///
+        /// Refer to [`cast_to_mut_ioslices_mut`].
+        ///
+        /// [`cast_to_mut_ioslices_mut`]: #method.cast_to_mut_ioslices_mut
         #[inline]
         pub unsafe fn cast_to_ioslices_mut(these: &mut [Self]) -> &mut [IoSlice<I>] {
             cast_slice_same_layout_mut(these)
@@ -1490,6 +1500,14 @@ mod io_box {
         pub fn cast_to_mut_ioslices(these: &[Self]) -> &[IoSliceMut<I>] {
             unsafe { cast_slice_same_layout(these) }
         }
+        /// Cast `&mut [IoBox]` to `&mut [IoSliceMut]`.
+        ///
+        /// # Safety
+        ///
+        /// Since a mutable slice that mirrors these allows it to change the start offsets and
+        /// advancing them in other ways (and even changing them to global variables etc.), this
+        /// can cause the Drop code to cause UB. The caller must ensure that any pointers are
+        /// changed back to what they were previously, before the drop code is run.
         #[inline]
         pub unsafe fn cast_to_mut_ioslices_mut(these: &mut [Self]) -> &mut [IoSliceMut<I>] {
             cast_slice_same_layout_mut(these)
@@ -1969,9 +1987,30 @@ pub unsafe trait SliceMut: Sized {
     /// The type that this turns into after initialization.
     type Initialized: AsRef<[u8]> + AsMut<[u8]> + Sized;
 
+    /// Retrieve an immutable slice pointing to possibly uninitialized memory. __This must be
+    /// exactly the same slice as the one from [`as_maybe_uninit_slice_mut`], or the trait
+    /// implementation as a whole, gets incorrect.__
+    ///
+    /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>];
+
+    /// Retrieve a mutable slice pointing to possibly uninitialized memory. __This must always
+    /// point to the same slice as with previous invocations__, and it must be safe to call
+    /// [`assume_init`] when all bytes here are overwritten.
+    ///
+    /// [`assume_init`]: #tymethod.assume_init
     fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
 
+    /// Unsafely assume that the value actually is initialized, getting a value of the initialized
+    /// type.
+    ///
+    /// # Safety
+    ///
+    /// The safety of calling this depends on the initialization invariant. Before this can ever be
+    /// called, the caller must ensure that every byte given in [`as_maybe_uninit_slice_mut`] has
+    /// been written to, or that it was already initialized.
+    ///
+    /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
     unsafe fn assume_init(self) -> Self::Initialized;
 }
 
@@ -2018,7 +2057,9 @@ pub trait SliceMutPartialExt: SliceMutPartial {
         // NOTE: This will validate the length.
         let (mut to_initialize, residue) = self.split_at(init_len);
 
-        to_initialize.as_maybe_uninit_slice_mut().init_by_filling(byte);
+        to_initialize
+            .as_maybe_uninit_slice_mut()
+            .init_by_filling(byte);
         (unsafe { to_initialize.assume_init() }, residue)
     }
     #[inline]
@@ -2031,7 +2072,9 @@ pub trait SliceMutPartialExt: SliceMutPartial {
         // NOTE: This will validate the length.
         let (mut to_initialize, residue) = self.split_at(source.len());
 
-        to_initialize.as_maybe_uninit_slice_mut().copy_from_slice(cast_init_to_uninit_slice(source));
+        to_initialize
+            .as_maybe_uninit_slice_mut()
+            .copy_from_slice(cast_init_to_uninit_slice(source));
         (unsafe { to_initialize.assume_init() }, residue)
     }
 }
@@ -2120,6 +2163,52 @@ unsafe impl<'a> SliceMutPartial for &'a mut [MaybeUninit<u8>] {
     }
 }
 
+#[cfg(feature = "alloc")]
+unsafe impl SliceMut for Box<[u8]> {
+    type Initialized = Box<[u8]>;
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        cast_init_to_uninit_slice(self)
+    }
+    #[inline]
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        cast_init_to_uninit_slice_mut(self)
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        self
+    }
+}
+#[cfg(feature = "alloc")]
+unsafe impl SliceMut for Box<[MaybeUninit<u8>]> {
+    type Initialized = Box<[u8]>;
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        self
+    }
+    #[inline]
+    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        #[cfg(feature = "nightly")]
+        {
+            #[forbid(unconditional_recursion)]
+            Box::assume_init(self)
+        }
+        #[cfg(not(feature = "nightly"))]
+        {
+            let slice_ptr = Box::into_raw(self);
+            Box::from_raw(cast_uninit_to_init_slice_mut(&mut *slice_ptr))
+        }
+    }
+}
+
 #[inline]
 unsafe fn cast_slice_same_layout<A, B>(a: &[A]) -> &[B] {
     core::slice::from_raw_parts(a.as_ptr() as *const B, a.len())
@@ -2167,9 +2256,9 @@ pub fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] 
 /// For this to be safe, the initialization invariant must be upheld, exactly like when reading.
 ///
 /// __NOTE: This must not be used for initializing the buffer__. For that, there are are other safe
-/// methods like [`init_from_slice`] and [`init_by_filling`]. If unsafe code is still somehow,
-/// always initialize this by copying from _another_ MaybeUninit slice, or using [`std::ptr::copy`]
-/// or [`std::ptr::copy_nonoverlapping`].
+/// methods like [`SliceMutExt::init_by_filling`] and [`SliceMutExt::init_by_copying`]. If unsafe
+/// code is still somehow, always initialize this by copying from _another_ MaybeUninit slice, or
+/// using [`std::ptr::copy`] or [`std::ptr::copy_nonoverlapping`].
 #[inline]
 pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     cast_slice_same_layout_mut(uninit)

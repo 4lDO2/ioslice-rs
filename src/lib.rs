@@ -14,6 +14,33 @@
 //!
 //! `IoSlice` will however implement `AsRef<[u8]>`, `Borrow<[u8]>`, and `Deref<Target = [u8]>`
 //! regardless of the features used.
+//!
+//! # Examples
+//!
+//! ## A `Read`-like trait implemented to better support uninitialized memory.
+//! ```
+//! # use std::io;
+//!
+//! use ioslice::{Initialization, Initialized, IoSliceMut, SliceMutPartialExt};
+//!
+//! # // TODO: Add more safe abstractions for slices of I/O slices.
+//!
+//! pub trait MyRead {
+//!     // NOTE: This could be a regular slice as well.
+//!     fn read<I: Initialization>(&mut self, slice: IoSliceMut<I>) -> io::Result<(IoSliceMut<Initialized>, IoSliceMut<I>)>;
+//! }
+//!
+//! impl MyRead for [u8] {
+//!     fn read<I: Initialization>(&mut self, slice: IoSliceMut<I>) ->
+//!     io::Result<(IoSliceMut<Initialized>, IoSliceMut<I>)> {
+//!
+//!         let (initialized, remainder) = slice.partially_init_by_copying(self);
+//!
+//!         let bytes_copied = initialized.len();
+//!         self = &mut self[..bytes_copied];
+//!     }
+//! }
+//! ```
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]

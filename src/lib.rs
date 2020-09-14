@@ -1674,46 +1674,54 @@ mod io_box {
         }
     }
     impl<I: Initialization> AsRef<[I::DerefTargetItem]> for IoBox<I> {
+        #[inline]
         fn as_ref(&self) -> &[I::DerefTargetItem] {
             self.inner_data()
         }
     }
     impl<I: Initialization> AsMut<[I::DerefTargetItem]> for IoBox<I> {
+        #[inline]
         fn as_mut(&mut self) -> &mut [I::DerefTargetItem] {
             self.inner_data_mut()
         }
     }
-    impl core::borrow::Borrow<[u8]> for IoBox {
-        fn borrow(&self) -> &[u8] {
-            self.as_slice()
+    impl<I: Initialization> core::borrow::Borrow<[I::DerefTargetItem]> for IoBox<I> {
+        #[inline]
+        fn borrow(&self) -> &[I::DerefTargetItem] {
+            self.inner_data()
         }
     }
-    impl core::borrow::BorrowMut<[u8]> for IoBox {
-        fn borrow_mut(&mut self) -> &mut [u8] {
-            self.as_slice_mut()
+    impl<I: Initialization> core::borrow::BorrowMut<[I::DerefTargetItem]> for IoBox<I> {
+        #[inline]
+        fn borrow_mut(&mut self) -> &mut [I::DerefTargetItem] {
+            self.inner_data_mut()
         }
     }
-    impl PartialEq for IoBox {
+    impl PartialEq for IoBox<Initialized> {
+        #[inline]
         fn eq(&self, other: &Self) -> bool {
             self.as_slice() == other.as_slice()
         }
     }
-    impl PartialEq<[u8]> for IoBox {
+    impl PartialEq<[u8]> for IoBox<Initialized> {
+        #[inline]
         fn eq(&self, other: &[u8]) -> bool {
             self.as_slice() == other
         }
     }
-    impl<'a> PartialEq<IoSlice<'a>> for IoBox {
-        fn eq(&self, other: &IoSlice) -> bool {
+    impl<'a> PartialEq<IoSlice<'a, Initialized>> for IoBox<Initialized> {
+        #[inline]
+        fn eq(&self, other: &IoSlice<Initialized>) -> bool {
             self.as_slice() == other.as_slice()
         }
     }
-    impl<'a> PartialEq<IoSliceMut<'a>> for IoBox {
-        fn eq(&self, other: &IoSliceMut) -> bool {
+    impl<'a> PartialEq<IoSliceMut<'a, Initialized>> for IoBox<Initialized> {
+        #[inline]
+        fn eq(&self, other: &IoSliceMut<Initialized>) -> bool {
             self.as_slice() == other.as_slice()
         }
     }
-    impl Eq for IoBox {}
+    impl Eq for IoBox<Initialized> {}
     // TODO: more impls
 }
 #[cfg(all(unix, feature = "alloc"))]

@@ -1754,6 +1754,15 @@ mod io_box {
     unsafe impl<I: Initialization> SliceMut for IoBox<I> {
         type Initialized = IoBox<Initialized>;
 
+        fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+            #[forbid(unconditional_recursion)]
+            IoBox::as_maybe_uninit_slice(self)
+        }
+        fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+            #[forbid(unconditional_recursion)]
+            IoBox::as_maybe_uninit_slice_mut(self)
+        }
+
         unsafe fn assume_init(self) -> Self::Initialized {
             #[forbid(unconditional_recursion)]
             IoBox::assume_init(self)
@@ -1943,7 +1952,21 @@ mod tests {
 
 // TODO: Unfortunately &[u8] does not currently implement AsRef<[MaybeUninit<u8>]>, but in the
 // future we might simply also require AsRef and AsMut.
+/// A trait for mutable slices (there is not much to do at all with an uninitialized immutable
+/// slice, is there?), that can be safely casted to an uninitialized slice, but also unsafely
+/// assumed to be initialized when they may not be.
+///
+/// # Safety
+///
+/// This trait is unsafe to implement since whatever slices are returned from the casts here,
+/// __must have the same length and point to the same memory as before__. This is to allow safer
+/// abstractions to assume that there are has not unexpectedly appeared additional bytes that must
+/// be initialized.
+///
+/// In the future, when `&[u8]` starts implementing `AsRef<[MaybeUninit<u8>]>`, then this
+/// implementation must also ensure that the `AsRef` implementation is correct.
 pub unsafe trait SliceMut: Sized {
+    /// The type that this turns into after initialization.
     type Initialized: AsRef<[u8]> + AsMut<[u8]> + Sized;
 
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>];
@@ -1951,6 +1974,80 @@ pub unsafe trait SliceMut: Sized {
 
     unsafe fn assume_init(self) -> Self::Initialized;
 }
+
+pub unsafe trait SliceMutPartial: SliceMut {
+    fn split_at(self, n: usize) -> (Self, Self);
+}
+
+pub trait SliceMutExt: private2::Sealed + SliceMut {
+    #[inline]
+    fn init_by_filling(mut self, byte: u8) -> Self::Initialized {
+        let slice = self.as_maybe_uninit_slice_mut();
+
+        // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
+        // know that memcpy most likely is faster (and cleaner) than a loop.
+        #[cfg(feature = "nightly")]
+        {
+            slice.fill(MaybeUninit::new(byte));
+        }
+
+        #[cfg(not(feature = "nightly"))]
+        for slice_byte in slice {
+            *slice_byte = MaybeUninit::new(byte);
+        }
+
+        unsafe { self.assume_init() }
+    }
+
+    #[inline]
+    fn init_by_zeroing(self) -> Self::Initialized {
+        self.init_by_filling(0u8)
+    }
+
+    #[inline]
+    fn init_by_copying(mut self, source: &[u8]) -> Self::Initialized {
+        let slice = self.as_maybe_uninit_slice_mut();
+        assert_eq!(source.len(), slice.len(), "in order to fully initialize a slice-like type, the source slice must be exactly as large");
+        slice.copy_from_slice(cast_init_to_uninit_slice(source));
+        unsafe { self.assume_init() }
+    }
+}
+pub trait SliceMutPartialExt: SliceMutPartial {
+    #[inline]
+    fn partially_init_by_filling(self, init_len: usize, byte: u8) -> (Self::Initialized, Self) {
+        // NOTE: This will validate the length.
+        let (mut to_initialize, residue) = self.split_at(init_len);
+
+        to_initialize.as_maybe_uninit_slice_mut().init_by_filling(byte);
+        (unsafe { to_initialize.assume_init() }, residue)
+    }
+    #[inline]
+    fn partially_init_by_zeroing(self, init_len: usize) -> (Self::Initialized, Self) {
+        self.partially_init_by_filling(init_len, 0u8)
+    }
+
+    #[inline]
+    fn partially_init_by_copying(self, source: &[u8]) -> (Self::Initialized, Self) {
+        // NOTE: This will validate the length.
+        let (mut to_initialize, residue) = self.split_at(source.len());
+
+        to_initialize.as_maybe_uninit_slice_mut().copy_from_slice(cast_init_to_uninit_slice(source));
+        (unsafe { to_initialize.assume_init() }, residue)
+    }
+}
+
+mod private2 {
+    pub trait Sealed {}
+}
+mod private3 {
+    pub trait Sealed {}
+}
+
+impl<T> private2::Sealed for T where T: SliceMut {}
+impl<T> SliceMutExt for T where T: SliceMut {}
+
+impl<T> private3::Sealed for T where T: SliceMutPartial {}
+impl<T> SliceMutPartialExt for T where T: SliceMutPartial {}
 
 unsafe impl<'a, I: Initialization> SliceMut for IoSliceMut<'a, I> {
     type Initialized = IoSliceMut<'a, Initialized>;
@@ -1972,6 +2069,7 @@ unsafe impl<'a, I: Initialization> SliceMut for IoSliceMut<'a, I> {
         IoSliceMut::assume_init(self)
     }
 }
+// TODO: splitting for IoSliceMut
 
 unsafe impl<'a> SliceMut for &'a mut [u8] {
     type Initialized = &'a mut [u8];
@@ -2005,6 +2103,20 @@ unsafe impl<'a> SliceMut for &'a mut [MaybeUninit<u8>] {
     #[inline]
     unsafe fn assume_init(self) -> Self::Initialized {
         cast_uninit_to_init_slice_mut(self)
+    }
+}
+unsafe impl<'a> SliceMutPartial for &'a mut [u8] {
+    #[inline]
+    fn split_at(self, n: usize) -> (Self, Self) {
+        #[forbid(unconditional_recursion)]
+        <[u8]>::split_at_mut(self, n)
+    }
+}
+unsafe impl<'a> SliceMutPartial for &'a mut [MaybeUninit<u8>] {
+    #[inline]
+    fn split_at(self, n: usize) -> (Self, Self) {
+        #[forbid(unconditional_recursion)]
+        <[MaybeUninit<u8>]>::split_at_mut(self, n)
     }
 }
 

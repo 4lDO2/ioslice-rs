@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/4lDO2/ioslice-rs"
 license = "MIT"
 keywords = ["os", "iovec", "vectored-io"]
-categories = ["api-bindings", "no-std", "os::unix-apis", "os"]
+categories = ["api-bindings", "no-std", "os::unix-apis", "os::windows-apis", "os"]
 
 [features]
 default = ["std", "io_box"]
@@ -29,3 +29,8 @@ winapi = { version = "0.3", optional = true, features = ["ntdef", "ws2def"] }
 
 [dev-dependencies]
 libc = "0.2"
+
+[badges]
+travis-ci = { repository = "4lDO2/ioslice-rs", branch = "master" }
+is-it-maintained-issue-resolution = { repository = "4lDO2/ioslice-rs" }
+is-it-maintained-open-issues = { repository = "4lDO2/ioslice-rs" }

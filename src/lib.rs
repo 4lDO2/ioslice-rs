@@ -24,7 +24,6 @@
 //! use std::mem::MaybeUninit;
 //!
 //! use ioslice::{Initialization, Initialized, IoSliceMut, SliceMutPartialExt};
-//!
 //! # // TODO: Add more safe abstractions for slices of I/O slices.
 //!
 //! pub trait MyRead {
@@ -59,7 +58,7 @@
 //!
 //! # fn main() -> io::Result<()> {
 //!
-//! let mut buf = [MaybeUninit::new(0u8); 32];
+//! let mut buf = [MaybeUninit::uninit(); 32];
 //! let buf = IoSliceMut::from_uninit(&mut buf);
 //! let len = buf.len();
 //!
@@ -985,23 +984,6 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
 
     #[inline]
     #[must_use]
-    pub fn zeroed(mut self) -> IoSliceMut<'a, Initialized> {
-        #[cfg(feature = "nightly")]
-        {
-            self.as_maybe_uninit_slice_mut().fill(MaybeUninit::new(0));
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            for byte in self.as_maybe_uninit_slice_mut() {
-                *byte = MaybeUninit::new(0);
-            }
-        }
-
-        unsafe { self.assume_init() }
-    }
-    #[inline]
-    #[must_use]
     pub fn zeroed_by_ref<'b>(&'b mut self) -> &'b mut IoSliceMut<'a, Initialized> {
         #[cfg(feature = "nightly")]
         {
@@ -1634,20 +1616,6 @@ mod io_box {
         }
 
         #[inline]
-        pub fn zeroed(mut self) -> IoBox<Initialized> {
-            #[cfg(feature = "nightly")]
-            {
-                self.as_maybe_uninit_slice_mut().fill(MaybeUninit::new(0u8));
-            }
-            #[cfg(not(feature = "nightly"))]
-            {
-                for byte in self.as_maybe_uninit_slice_mut() {
-                    *byte = MaybeUninit::new(0u8);
-                }
-            }
-            unsafe { self.assume_init() }
-        }
-        #[inline]
         pub fn try_alloc_uninit(length: usize) -> Result<IoBox<Uninitialized>, AllocationError> {
             Self::try_alloc_inner(length, false)
         }
@@ -1959,7 +1927,7 @@ mod tests {
 
     #[test]
     fn partially_init_by_copying() {
-        let mut uninitialized_memory = [MaybeUninit::new(0u8); 32];
+        let mut uninitialized_memory = [MaybeUninit::uninit(); 32];
         let slice = IoSliceMut::from_uninit(&mut uninitialized_memory);
 
         let data = *b"this is some data";

@@ -1487,11 +1487,9 @@ unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 mod io_box {
     use super::*;
 
-    use alloc::alloc::{
-        alloc as allocate, alloc_zeroed as allocate_zeroed, Layout,
-    };
     #[cfg(any(all(unix, feature = "libc"), all(windows, feature = "winapi")))]
     use alloc::alloc::dealloc as deallocate;
+    use alloc::alloc::{alloc as allocate, alloc_zeroed as allocate_zeroed, Layout};
 
     use alloc::boxed::Box;
     use alloc::vec::Vec;

@@ -1410,6 +1410,11 @@ mod io_box {
             )
             .expect("error when creating allocation layout");
 
+            #[cfg(all(windows, feature = "winapi"))]
+            if length > u32::MAX as usize {
+                panic!("IoBox (or any WSABUF-based I/O slice) cannot be larger in size than ULONG, which is 32 bits on Windows.");
+            }
+
             let pointer = match zeroed {
                 false => unsafe { allocate(layout) },
                 true => unsafe { allocate_zeroed(layout) },
@@ -1431,6 +1436,12 @@ mod io_box {
         /// Since the allocator may be able to already have zeroed blocks of memory, this should be
         /// preferred over manually initializing it using [`zeroed`].
         ///
+        /// # Panics
+        ///
+        /// This associated function will panic on Windows platforms when using the `winapi`
+        /// feature, if the length exceeds the `WSABUF` limit of 2^32 bytes. Always check
+        /// beforehand; this will never be returned as a regular allocation error.
+        ///
         /// [`zeroed`]: #method.zeroed
         #[inline]
         pub fn try_alloc_zeroed(length: usize) -> Result<Self, AllocationError> {
@@ -1441,8 +1452,10 @@ mod io_box {
         ///
         /// # Panics
         ///
-        /// This method will, like most other heap-allocated structures in the `alloc` crate, panic
-        /// when there is no available memory left.
+        /// This associated function will, like most other heap-allocated structures in the `alloc`
+        /// crate, panic when there is no available memory left. On Windows platforms with using
+        /// the `winapi` feature, this will also panic if the length exceeds the `WSABUF` limit of
+        /// 2^32 bytes.
         #[inline]
         pub fn alloc_zeroed(length: usize) -> Self {
             match Self::try_alloc_zeroed(length) {
@@ -1641,10 +1654,29 @@ mod io_box {
         }
     }
     impl IoBox<Uninitialized> {
+        /// Attempt to allocate `length` bytes, returning either an uninitialized heap-allocated
+        /// buffer, or an error if the allocator was unable to allocate that many bytes. Note that
+        /// unless called in an `#![no_std]` environment, the OS will likely give more memory than
+        /// physically present, so prefer [`alloc_uninit`] instead in that case.
+        ///
+        /// # Panics
+        ///
+        /// This associated function will panic on Windows platforms when using the `winapi`
+        /// feature, if the length exceeds the `WSABUF` limit of 2^32 bytes. Always check
+        /// beforehand; this will never be returned as a regular allocation error.
+        ///
+        /// [`alloc_uninit`]: #method.alloc_uninit
         #[inline]
         pub fn try_alloc_uninit(length: usize) -> Result<IoBox<Uninitialized>, AllocationError> {
             Self::try_alloc_inner(length, false)
         }
+
+        /// Allocate `length` uninitialized bytes.
+        ///
+        /// # Panics
+        ///
+        /// This associated function will panic if out of memory, or if the length is greater than
+        /// 2^32 on Windows platforms.
         #[inline]
         pub fn alloc_uninit(length: usize) -> IoBox<Uninitialized> {
             match Self::try_alloc_uninit(length) {
@@ -1947,6 +1979,14 @@ mod tests {
         let (initialized, remainder) = slice.partially_init_by_copying(&data);
         assert_eq!(&*initialized, data);
         assert_eq!(remainder.len(), uninitialized_memory.len() - data.len());
+    }
+
+    #[test]
+    #[cfg(all(windows, feature = "winapi"))]
+    #[cfg_attr(target_pointer_width = "32", ignore)]
+    #[should_panic = "IoBox (or any WSABUF-based I/O slice) cannot be larger in size than ULONG, which is 32 bits on Windows."]
+    fn wsabuf_limit() {
+        let _ = IoBox::try_alloc_uninit(u32::MAX as usize + 1);
     }
 
     #[test]

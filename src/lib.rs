@@ -240,6 +240,18 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         self.inner.0
     }
 
+    /// Retrieve the inner WSABUF from this I/O slice.
+    ///
+    /// The raw WSABUF must be considered borrowed from this slice, even though it is not
+    /// explicitly tracked using a lifetime.
+    ///
+    /// _This is only available on Windows targets with the `winapi` feature enabled._
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub fn as_raw_wsabuf(&self) -> WSABUF {
+        self.inner.0
+    }
+
     /// Cast a slice of I/O slices into a slice of iovecs. Since these must share the same ABI
     /// layout, this is completely safe, and can be directly passed to system calls.
     ///
@@ -247,6 +259,17 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub fn cast_to_raw_iovecs(slices: &'a [Self]) -> &'a [libc::iovec] {
+        unsafe { cast_slice_same_layout(slices) }
+    }
+
+    /// Cast a slice of I/O slices into a slice of `WSABUF`s. Since these must share the same ABI
+    /// layout, this is completely safe, and the resulting slice can directly be passed to system
+    /// calls.
+    ///
+    /// _This is only available on Windows targets with the `winapi` feature enabled_.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub fn cast_to_raw_wsabufs(slices: &'a [Self]) -> &'a [WSABUF] {
         unsafe { cast_slice_same_layout(slices) }
     }
     /// Cast a mutable slice of I/O slices into a mutable slice of iovecs. iovecs share the exact
@@ -262,6 +285,22 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn cast_to_raw_iovecs_mut(slices: &'a mut [Self]) -> &'a mut [libc::iovec] {
+        cast_slice_same_layout_mut(slices)
+    }
+    /// Cast a mutable slice of I/O slices into a mutable slice of `WSABUF`s. Those share the exact
+    /// same ABI guarantees as this wrapper does.
+    ///
+    /// _This is only available on WIndows targets with the `winapi` feature enabled_.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe, since the `WSABUF`s can be mutated entirely in safe code, which will cause
+    /// the original wrapped slices to be changed as well. If the buffers are changed to invalid
+    /// values in any way, this breaks the validity invariant upheld by this wrapped type, leading
+    /// to UB.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub unsafe fn cast_to_raw_wsabufs_mut(slices: &'a mut [Self]) -> &'a mut [WSABUF] {
         cast_slice_same_layout_mut(slices)
     }
 
@@ -1483,13 +1522,13 @@ mod io_box {
             Self::__construct(base, len)
         }
         #[cfg(all(unix, feature = "libc"))]
-        pub fn into_iovec(self) -> libc::iovec {
+        pub fn into_raw_iovec(self) -> libc::iovec {
             let iovec = self.inner;
             core::mem::forget(self);
             iovec
         }
         #[cfg(all(windows, feature = "winapi"))]
-        pub fn into_wsabuf(self) -> WSABUF {
+        pub fn into_raw_wsabuf(self) -> WSABUF {
             let wsabuf = self.inner;
             core::mem::forget(self);
             wsabuf

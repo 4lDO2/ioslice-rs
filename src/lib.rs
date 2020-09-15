@@ -1489,8 +1489,8 @@ mod io_box {
     use alloc::boxed::Box;
     use alloc::vec::Vec;
 
-    /// An owned chunk of memory, that is ABI-compatible with [`libc::iovec`]. At the moment this
-    /// does not work on Windows.
+    /// An owned chunk of memory, that is ABI-compatible with [`libc::iovec`] or `WSABUF`,
+    /// depending on the platform and Cargo features used.
     ///
     /// This must be allocated via the system alloc; importing pointers from _malloc(2)_ is
     /// currently not possible.
@@ -1644,10 +1644,7 @@ mod io_box {
         #[inline]
         pub fn inner_data(&self) -> &[I::DerefTargetItem] {
             unsafe {
-                core::slice::from_raw_parts(
-                    self.__ptr() as *const I::DerefTargetItem,
-                    self.__len(),
-                )
+                core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, self.__len())
             }
         }
         #[inline]
@@ -1655,7 +1652,7 @@ mod io_box {
             unsafe {
                 core::slice::from_raw_parts_mut(
                     self.__ptr() as *mut I::DerefTargetItem,
-                    self.__len()
+                    self.__len(),
                 )
             }
         }
@@ -1811,7 +1808,6 @@ mod io_box {
                 Err(AllocationError(layout)) => alloc::alloc::handle_alloc_error(layout),
             }
         }
-
     }
     impl IoBox<Initialized> {
         #[inline]
@@ -2259,8 +2255,14 @@ mod tests {
         let mut buf = &mut original_buf[..];
         buf.write_vectored(io_slices).unwrap();
 
-        assert!(original_buf[..1024].iter().copied().eq(std::iter::repeat(0xFF).take(1024)));
-        assert!(original_buf[1024..1024 + 2048].iter().copied().eq(std::iter::repeat(0x00).take(2048)));
+        assert!(original_buf[..1024]
+            .iter()
+            .copied()
+            .eq(std::iter::repeat(0xFF).take(1024)));
+        assert!(original_buf[1024..1024 + 2048]
+            .iter()
+            .copied()
+            .eq(std::iter::repeat(0x00).take(2048)));
 
         // TODO: Test more things.
     }

@@ -970,7 +970,7 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     ///
     /// This is unsafe because the initialization or validity invariants may be broken since the
     /// WSABUFs can be changed arbitrarily in a mutable reference.
-    #[cfg(all(unix, feature = "libc"))]
+    #[cfg(all(windows, feature = "winapi"))]
     #[inline]
     pub unsafe fn cast_to_raw_wsabufs_mut(slices: &mut [Self]) -> &mut [WSABUF] {
         cast_slice_same_layout_mut(slices)

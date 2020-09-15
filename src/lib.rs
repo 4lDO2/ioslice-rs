@@ -1352,7 +1352,7 @@ impl<'a, I: Initialization, const N: usize> From<&'a mut [I::DerefTargetItem; N]
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 
-#[cfg(all(unix, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 mod io_box {
     use super::*;
 
@@ -1372,7 +1372,10 @@ mod io_box {
         #[cfg(all(unix, feature = "libc"))]
         inner: libc::iovec,
 
-        #[cfg(not(all(unix, feature = "libc")))]
+        #[cfg(all(windows, feature = "winapi"))]
+        inner: WSABUF,
+
+        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
         inner: Box<[I::DerefTargetItem]>,
 
         _marker: PhantomData<I>,
@@ -1416,7 +1419,7 @@ mod io_box {
                 return Err(AllocationError(layout));
             }
 
-            Ok(unsafe { IoBox::from_raw_parts(pointer as *mut J::DerefTargetItem, length) })
+            Ok(unsafe { IoBox::__construct(pointer as *mut J::DerefTargetItem, length) })
         }
         /// Attempt to allocate `length` bytes, which are initially set to zero.
         ///
@@ -1451,24 +1454,10 @@ mod io_box {
         /// Turn the I/O box into the underlying pointer and size.
         #[inline]
         pub fn into_raw_parts(self) -> (*mut u8, usize) {
-            #[cfg(all(unix, feature = "libc"))]
-            return {
-                let iov_base = self.inner.iov_base as *mut u8;
-                let iov_len = self.inner.iov_len;
-
-                core::mem::forget(self);
-
-                (iov_base, iov_len)
-            };
-            #[cfg(not(all(unix, feature = "libc")))]
-            return {
-                let slice_ptr = self.inner.into_raw();
-
-                unsafe {
-                    let slice = &*slice_ptr;
-                    (slice.as_mut_ptr(), slice.len())
-                }
-            };
+            let ptr = self.__ptr();
+            let len = self.__len();
+            core::mem::forget(self);
+            (ptr as *mut u8, len)
         }
         /// Convert an underlying pointer and size, into an [`IoBox`].
         ///
@@ -1478,24 +1467,7 @@ mod io_box {
         /// addition to that, the pointer must be allocated using the system allocator.
         #[inline]
         pub unsafe fn from_raw_parts(base: *mut I::DerefTargetItem, len: usize) -> Self {
-            #[cfg(all(unix, feature = "libc"))]
-            return {
-                Self {
-                    inner: libc::iovec {
-                        iov_base: base as *mut libc::c_void,
-                        iov_len: len,
-                    },
-                    _marker: PhantomData,
-                }
-            };
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            return {
-                Self {
-                    inner: Box::from_raw(core::slice::from_raw_parts_mut(base, len)),
-                    _marker: PhantomData,
-                }
-            };
+            Self::__construct(base, len)
         }
         #[cfg(all(unix, feature = "libc"))]
         pub fn into_iovec(self) -> libc::iovec {
@@ -1503,22 +1475,23 @@ mod io_box {
             core::mem::forget(self);
             iovec
         }
+        #[cfg(all(windows, feature = "winapi"))]
+        pub fn into_wsabuf(self) -> WSABUF {
+            let wsabuf = self.inner;
+            core::mem::forget(self);
+            wsabuf
+        }
 
         #[inline]
         pub fn into_box(self) -> Box<[I::DerefTargetItem]> {
-            #[cfg(all(unix, feature = "libc"))]
-            return {
-                let (ptr, len) = self.into_raw_parts();
-                unsafe {
-                    Box::from_raw(core::slice::from_raw_parts_mut(
-                        ptr as *mut I::DerefTargetItem,
-                        len,
-                    ))
-                }
-            };
+            let (ptr, len) = self.into_raw_parts();
 
-            #[cfg(not(all(unix, feature = "libc")))]
-            return { io_box.inner };
+            unsafe {
+                Box::from_raw(core::slice::from_raw_parts_mut(
+                    ptr as *mut I::DerefTargetItem,
+                    len,
+                ))
+            }
         }
         #[inline]
         pub fn as_ioslice(&self) -> IoSlice<I> {
@@ -1530,29 +1503,21 @@ mod io_box {
         }
         #[inline]
         pub fn inner_data(&self) -> &[I::DerefTargetItem] {
-            #[cfg(all(unix, feature = "libc"))]
-            return unsafe {
+            unsafe {
                 core::slice::from_raw_parts(
-                    self.inner.iov_base as *const I::DerefTargetItem,
-                    self.inner.iov_len,
+                    self.__ptr() as *const I::DerefTargetItem,
+                    self.__len(),
                 )
-            };
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            return &*self.inner;
+            }
         }
         #[inline]
         pub fn inner_data_mut(&mut self) -> &mut [I::DerefTargetItem] {
-            #[cfg(all(unix, feature = "libc"))]
-            return unsafe {
+            unsafe {
                 core::slice::from_raw_parts_mut(
-                    self.inner.iov_base as *mut I::DerefTargetItem,
-                    self.inner.iov_len,
+                    self.__ptr() as *mut I::DerefTargetItem,
+                    self.__len()
                 )
-            };
-
-            #[cfg(not(all(unix, feature = "libc")))]
-            return &mut *self.inner;
+            }
         }
         #[inline]
         pub fn cast_to_ioslices(these: &[Self]) -> &[IoSlice<I>] {
@@ -1601,10 +1566,8 @@ mod io_box {
         /// [`as_maybe_uninit_slice_mut`]: #method.as_maybe_uninit_slice_mut
         #[inline]
         pub unsafe fn assume_init(self) -> IoBox<Initialized> {
-            IoBox {
-                inner: self.inner,
-                _marker: PhantomData,
-            }
+            let (ptr, len) = self.into_raw_parts();
+            IoBox::from_raw_parts(ptr, len)
         }
         #[inline]
         pub fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
@@ -1613,18 +1576,6 @@ mod io_box {
         #[inline]
         pub fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
             unsafe { cast_slice_same_layout_mut(self.inner_data_mut()) }
-        }
-
-        #[inline]
-        pub fn try_alloc_uninit(length: usize) -> Result<IoBox<Uninitialized>, AllocationError> {
-            Self::try_alloc_inner(length, false)
-        }
-        #[inline]
-        pub fn alloc_uninit(length: usize) -> IoBox<Uninitialized> {
-            match Self::try_alloc_uninit(length) {
-                Ok(boxed) => boxed,
-                Err(AllocationError(layout)) => alloc::alloc::handle_alloc_error(layout),
-            }
         }
 
         #[inline]
@@ -1639,6 +1590,69 @@ mod io_box {
         pub fn into_uninit_box(self) -> Box<[MaybeUninit<u8>]> {
             self.into_uninit().into_box()
         }
+
+        fn __ptr(&self) -> *mut I::DerefTargetItem {
+            #[cfg(all(unix, feature = "libc"))]
+            {
+                self.inner.iov_base as *mut I::DerefTargetItem
+            }
+            #[cfg(all(windows, feature = "winapi"))]
+            {
+                self.inner.buf as *mut I::DerefTargetItem
+            }
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+            {
+                self.inner.as_ptr()
+            }
+        }
+        #[inline]
+        fn __len(&self) -> usize {
+            #[cfg(all(unix, feature = "libc"))]
+            {
+                self.inner.iov_len as usize
+            }
+            #[cfg(all(windows, feature = "winapi"))]
+            {
+                self.inner.len as usize
+            }
+            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+            {
+                self.inner.len()
+            }
+        }
+        #[inline]
+        unsafe fn __construct(ptr: *mut I::DerefTargetItem, len: usize) -> Self {
+            Self {
+                #[cfg(all(unix, feature = "libc"))]
+                inner: libc::iovec {
+                    iov_base: ptr as *mut libc::c_void,
+                    iov_len: len,
+                },
+                #[cfg(all(windows, feature = "winapi"))]
+                inner: WSABUF {
+                    buf: ptr as *mut CHAR,
+                    len: len as ULONG,
+                },
+                #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
+                inner: Box::from_raw(unsafe { core::slice::from_raw_parts_mut(ptr, len) }),
+
+                _marker: PhantomData,
+            }
+        }
+    }
+    impl IoBox<Uninitialized> {
+        #[inline]
+        pub fn try_alloc_uninit(length: usize) -> Result<IoBox<Uninitialized>, AllocationError> {
+            Self::try_alloc_inner(length, false)
+        }
+        #[inline]
+        pub fn alloc_uninit(length: usize) -> IoBox<Uninitialized> {
+            match Self::try_alloc_uninit(length) {
+                Ok(boxed) => boxed,
+                Err(AllocationError(layout)) => alloc::alloc::handle_alloc_error(layout),
+            }
+        }
+
     }
     impl IoBox<Initialized> {
         #[inline]
@@ -1652,18 +1666,17 @@ mod io_box {
     }
     impl<I: Initialization> Drop for IoBox<I> {
         fn drop(&mut self) {
-            #[cfg(all(unix, feature = "libc"))]
+            #[cfg(any(all(unix, feature = "libc"), all(windows, feature = "winapi")))]
             unsafe {
                 deallocate(
-                    self.inner.iov_base as *mut u8,
+                    self.__ptr() as *mut u8,
                     Layout::from_size_align(
-                        self.inner
-                            .iov_len
+                        self.__len()
                             .checked_mul(mem::size_of::<u8>())
-                            .unwrap(),
+                            .expect("overflow on multiplication that should be a no-op"),
                         mem::align_of::<u8>(),
                     )
-                    .unwrap(),
+                    .expect("failed to deallocate due to invalid layout"),
                 );
             }
         }
@@ -1849,7 +1862,7 @@ mod io_box {
         }
     }
 }
-#[cfg(all(unix, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 pub use io_box::*;
 
 #[cfg(test)]
@@ -2059,6 +2072,30 @@ mod tests {
             .flat_map(|ioslice| ioslice.as_slice())
             .copied();
         assert!(Iterator::eq(src_iter, dst_iter));
+    }
+    #[test]
+    fn iobox() {
+        use std::io::Write;
+
+        let iobox = IoBox::alloc_uninit(1024);
+        let initialized = iobox.init_by_filling(0xFF);
+
+        let iobox2 = IoBox::alloc_zeroed(2048);
+
+        let boxes = [initialized, iobox2];
+
+        let io_slices = IoSlice::cast_to_std_ioslices(IoBox::cast_to_ioslices(&boxes));
+
+        // NOTE: This test currently depends on the fact that the Write impl for slices, never
+        // only writes part of the buffers.
+        let mut original_buf = [0u8; 1024 + 2048];
+        let mut buf = &mut original_buf[..];
+        buf.write_vectored(io_slices).unwrap();
+
+        assert!(original_buf[..1024].iter().copied().eq(std::iter::repeat(0xFF).take(1024)));
+        assert!(original_buf[1024..1024 + 2048].iter().copied().eq(std::iter::repeat(0x00).take(2048)));
+
+        // TODO: Test more things.
     }
     // TODO: Make IoSlice compatible with WSABUF without std as well.
 }

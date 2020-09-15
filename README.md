@@ -1,4 +1,5 @@
 # ioslice-rs
+[![Build Status](https://travis-ci.org/4lDO2/ioslice-rs.svg?branch=master)](https://travis-ci.org/4lDO2/ioslice-rs)
 [![Crates.io](https://img.shields.io/crates/v/ioslice.svg)](https://crates.io/crates/ioslice)
 [![Documentation](https://docs.rs/ioslice/badge.svg)](https://docs.rs/ioslice/)
 

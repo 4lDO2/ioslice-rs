@@ -228,6 +228,23 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
             _marker: PhantomData,
         }
     }
+    /// Wrap a system `WSABUF` into a wrapped I/O slice, assuming the buffer can be represented as
+    /// borrowed for the lifetime `'a`. Consider wrapping it in an [`IoBox`] if ownership of the
+    /// `WSABUF` is desired.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the slice must be _valid_ (refer to the [`std::ptr`] docs) and not
+    /// aliased mutably. If the generic parameter `I` is set to `Initialized`, the slice must also
+    /// contain initialized data.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub unsafe fn from_raw_wsabuf(slice: WSABUF) -> Self {
+        Self {
+            inner: (slice, PhantomData),
+            _marker: PhantomData,
+        }
+    }
     /// Retrieve the inner iovec from this I/O slice.
     ///
     /// The raw iovec must be considered borrowed from this slice, even though it is not tracked
@@ -303,6 +320,8 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     pub unsafe fn cast_to_raw_wsabufs_mut(slices: &'a mut [Self]) -> &'a mut [WSABUF] {
         cast_slice_same_layout_mut(slices)
     }
+
+    // TODO: from_raw_{iovec,wsabuf}s{,_mut}
 
     /// Advance the start offset of an I/O slice, effectively shrinking it from the start.
     ///
@@ -878,6 +897,17 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
             _marker: PhantomData,
         }
     }
+    /// Wrap a system `WSABUF` into this wrapper.
+    ///
+    /// _This is only available on Windows targets with the `winapi` feature enabled._
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub unsafe fn from_raw_wsabuf(slice: WSABUF) -> Self {
+        Self {
+            inner: (slice, PhantomData),
+            _marker: PhantomData,
+        }
+    }
     /// Retrieve the wrapped raw [`libc::iovec ] from this wrapper.
     ///
     /// The resulting slice is considered immutable, even though it is neither UB nor more unsafe
@@ -897,10 +927,28 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     pub fn as_raw_iovec_mut(&mut self) -> libc::iovec {
         self.inner.0
     }
+
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub fn as_raw_wsabuf(&self) -> WSABUF {
+        self.inner.0
+    }
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub fn as_raw_wsabuf_mut(&mut self) -> WSABUF {
+        self.inner.0
+    }
+
     /// Cast a slice of wrapped I/O slices into a slice of [`libc::iovec`]s.
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub fn cast_to_raw_iovecs(slices: &[Self]) -> &[libc::iovec] {
+        unsafe { cast_slice_same_layout(slices) }
+    }
+    /// Cast a slice of wrapped I/O slices into a slice of `WSABUF`s.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub fn cast_to_raw_wsabufs(slices: &[Self]) -> &[WSABUF] {
         unsafe { cast_slice_same_layout(slices) }
     }
     /// Unsafely cast a mutable slice of wrapped I/O slices into a mutable slice of
@@ -915,8 +963,22 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     pub unsafe fn cast_to_raw_iovecs_mut(slices: &mut [Self]) -> &mut [libc::iovec] {
         cast_slice_same_layout_mut(slices)
     }
+    /// Unsafely cast a mutable slice of wrapped I/O slices into a mutable slice of
+    /// `WSABUF`s.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because the initialization or validity invariants may be broken since the
+    /// WSABUFs can be changed arbitrarily in a mutable reference.
+    #[cfg(all(unix, feature = "libc"))]
+    #[inline]
+    pub unsafe fn cast_to_raw_wsabufs_mut(slices: &mut [Self]) -> &mut [WSABUF] {
+        cast_slice_same_layout_mut(slices)
+    }
 
     /// Unsafely cast a slice of [`libc::iovec`]s into a slice of [`IoSliceMut`].
+    ///
+    /// _This is only available on Unix platforms with the `libc` feature enabled._
     ///
     /// # Safety
     ///
@@ -928,12 +990,38 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
     /// Unsafely cast a mutable slice of [`libc::iovec`]s into a mutable slice of [`IoSliceMut`].
     ///
+    /// _This is only available on Unix platforms with the `libc` feature enabled._
+    ///
     /// # Safety
     ///
     /// This is unsafe since the iovecs must uphold the validity and initialization invariants.
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub unsafe fn from_raw_iovecs_mut(slice: &mut [libc::iovec]) -> &mut [Self] {
+        cast_slice_same_layout_mut(slice)
+    }
+    /// Unsafely cast a slice of `WSABUF`s into a slice of [`IoSliceMut`].
+    ///
+    /// _This is only available on Windows platforms with the `winapi` feature enabled._
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe since the buffers must uphold the validity and initialization invariants.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub unsafe fn from_raw_wsabufs(slice: &[WSABUF]) -> &[Self] {
+        cast_slice_same_layout(slice)
+    }
+    /// Unsafely cast a mutable slice of `WSABUF`s into a mutable slice of [`IoSliceMut`].
+    ///
+    /// _This is only available on Windows platforms with the `winapi` feature enabled._
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe since the buffers must uphold the validity and initialization invariants.
+    #[cfg(all(windows, feature = "winapi"))]
+    #[inline]
+    pub unsafe fn from_raw_wsabufs_mut(slice: &mut [WSABUF]) -> &mut [Self] {
         cast_slice_same_layout_mut(slice)
     }
     /// Advance the start offset of a single slice by `count` bytes, reducing the length as well.

@@ -123,6 +123,10 @@ use core::{cmp, fmt, hash, ops};
 #[allow(unused_imports)]
 use core::mem;
 
+#[allow(unused_imports)]
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 #[cfg(all(windows, feature = "winapi"))]
 use winapi::shared::{
     ntdef::{CHAR, ULONG},
@@ -1484,8 +1488,11 @@ mod io_box {
     use super::*;
 
     use alloc::alloc::{
-        alloc as allocate, alloc_zeroed as allocate_zeroed, dealloc as deallocate, Layout,
+        alloc as allocate, alloc_zeroed as allocate_zeroed, Layout,
     };
+    #[cfg(any(all(unix, feature = "libc"), all(windows, feature = "winapi")))]
+    use alloc::alloc::dealloc as deallocate;
+
     use alloc::boxed::Box;
     use alloc::vec::Vec;
 
@@ -1739,7 +1746,7 @@ mod io_box {
             }
             #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
             {
-                self.inner.as_ptr()
+                self.inner.as_ptr() as *mut I::DerefTargetItem
             }
         }
         #[inline]
@@ -1771,7 +1778,7 @@ mod io_box {
                     len: len as ULONG,
                 },
                 #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-                inner: Box::from_raw(unsafe { core::slice::from_raw_parts_mut(ptr, len) }),
+                inner: Box::from_raw(core::slice::from_raw_parts_mut(ptr, len)),
 
                 _marker: PhantomData,
             }
@@ -2237,6 +2244,7 @@ mod tests {
         assert!(Iterator::eq(src_iter, dst_iter));
     }
     #[test]
+    #[cfg(feature = "std")]
     fn iobox() {
         use std::io::Write;
 
@@ -2247,7 +2255,8 @@ mod tests {
 
         let boxes = [initialized, iobox2];
 
-        let io_slices = IoSlice::cast_to_std_ioslices(IoBox::cast_to_ioslices(&boxes));
+        let io_slices = IoBox::cast_to_ioslices(&boxes);
+        let io_slices = IoSlice::cast_to_std_ioslices(io_slices);
 
         // NOTE: This test currently depends on the fact that the Write impl for slices, never
         // only writes part of the buffers.

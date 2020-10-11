@@ -1,14 +1,14 @@
 use core::mem::MaybeUninit;
 
-use crate::{Initialize, InitializeExt};
+use crate::{Initialize, InitializeIndirect, InitializeExt};
 
 pub trait Source {
-    fn fill<T: Initialize>(&mut self, buf: BufferRef<T>);
+    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>);
 }
 pub trait FallibleSource {
     type Error;
 
-    fn try_fill<T: Initialize>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error>;
+    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error>;
 }
 
 pub trait FullSource {}
@@ -34,7 +34,7 @@ impl Fill {
 }
 
 impl Source for Fill {
-    fn fill<T: Initialize>(&mut self, mut buf: BufferRef<T>) {
+    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
         buf.uninit_part_mut().init_by_filling(self.byte());
 
         // SAFETY: The only safety invariant, that all previously-uninitialized bytes must be
@@ -45,7 +45,7 @@ impl Source for Fill {
 impl FallibleSource for Fill {
     type Error = core::convert::Infallible;
 
-    fn try_fill<T: Initialize>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
+    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
         Ok(self.fill(buf))
     }
 }
@@ -57,7 +57,7 @@ pub struct FillConst<const BYTE: u8>;
 
 #[cfg(feature = "nightly")]
 impl<const BYTE: u8> Source for FillConst<BYTE> {
-    fn fill<T: Initialize>(&mut self, buf: BufferRef<T>) {
+    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) {
         Fill::from_byte(BYTE).fill(buf)
     }
 }
@@ -65,7 +65,7 @@ impl<const BYTE: u8> Source for FillConst<BYTE> {
 impl<const BYTE: u8> FallibleSource for FillConst<BYTE> {
     type Error = core::convert::Infallible;
 
-    fn try_fill<T: Initialize>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
+    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
         Fill::from_byte(BYTE).try_fill(buf)
     }
 }
@@ -81,7 +81,7 @@ impl<S> Source for Limit<S>
 where
     S: Source,
 {
-    fn fill<T: Initialize>(&mut self, mut buf: BufferRef<T>) {
+    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
         let uninit_part_mut = buf.uninit_part_mut();
         let len = core::cmp::min(uninit_part_mut.len(), self.limit);
         let mut smaller_buffer = Buffer::new(&mut uninit_part_mut[..len]);
@@ -101,7 +101,7 @@ impl<S> Source for Io<S>
 where
     S: std::io::Read,
 {
-    fn fill<T: Initialize>(&mut self, buf: BufferRef<T>) {
+    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) {
         match self.try_fill(buf) {
             Ok(()) => (),
             Err(_) => return,
@@ -115,7 +115,7 @@ where
 {
     type Error = std::io::Error;
 
-    fn try_fill<T: Initialize>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
+    fn try_fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
         // TODO: Compatibility with the ongoing RFC, https://github.com/rust-lang/rfcs/pull/2930.
         // We don't want to zero the buffer even if it's already initialized!
         let initialized = buf.uninit_part_mut().init_by_filling(0);
@@ -139,7 +139,7 @@ where
     I: Iterator,
     I::Item: Source,
 {
-    fn fill<T: Initialize>(&mut self, mut buf: BufferRef<T>) {
+    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
         while let Some(mut source) = self.inner.next() {
             source.fill(buf.by_ref());
         }
@@ -152,7 +152,7 @@ where
 {
     type Error = <<I as Iterator>::Item as FallibleSource>::Error;
 
-    fn try_fill<T: Initialize>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
+    fn try_fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
         while let Some(mut source) = self.inner.next() {
             source.try_fill(buf.by_ref())?;
         }
@@ -200,7 +200,7 @@ impl<T> Buffer<T> {
 
 impl<T> Buffer<T>
 where
-    T: Initialize,
+    T: InitializeIndirect,
 {
     fn debug_assert_valid_len(&self) {
         debug_assert!(self.all_uninit().len() >= self.bytes_filled);
@@ -393,8 +393,8 @@ where
     /// This is unsafe since it must uphold the initialization invariant; every byte of the
     /// uninitialized part must have been written to.
     #[inline]
-    pub unsafe fn assume_init(self) -> T::Initialized {
-        self.inner.assume_init()
+    pub unsafe fn assume_init(self) -> T::InitializedSlice {
+        self.inner.assume_init_all()
     }
     /// Revert the internal cursor to 0, forgetting about the initialized bytes.
     #[inline]
@@ -405,18 +405,18 @@ where
         source.fill(self.by_ref())
     }
     #[inline]
-    pub fn try_into_init(self) -> Result<T::Initialized, Self> {
+    pub fn try_into_init(self) -> Result<T::InitializedSlice, Self> {
         if self.is_completely_filled() {
             Ok(unsafe { self.assume_init() })
         } else {
             Err(self)
         }
     }
-    pub fn try_init_from_source(mut self, source: impl Source) -> Result<T::Initialized, Self> {
+    pub fn try_init_from_source(mut self, source: impl Source) -> Result<T::InitializedSlice, Self> {
         self.fill_from_source(source);
         self.try_into_init()
     }
-    pub fn init_from_source(mut self, source: impl Source + FullSource) -> T::Initialized {
+    pub fn init_from_source(mut self, source: impl Source + FullSource) -> T::InitializedSlice {
         self.fill_from_source(source);
 
         match self.try_into_init() {
@@ -426,15 +426,15 @@ where
     }
     // TODO: Use specialization to merge init_from_source and init_from_trusted_source into a
     // single function.
-    pub fn init_from_trusted_source(mut self, source: impl Source + TrustedFullSource) -> T::Initialized {
+    pub fn init_from_trusted_source(mut self, source: impl Source + TrustedFullSource) -> T::InitializedSlice {
         self.fill_from_source(source);
 
         unsafe { self.assume_init() }
     }
-    pub fn init_by_filling(self, byte: u8) -> T::Initialized {
+    pub fn init_by_filling(self, byte: u8) -> T::InitializedSlice {
         self.init_from_trusted_source(Fill::from_byte(byte))
     }
-    pub fn init_by_zeroing(self) -> T::Initialized {
+    pub fn init_by_zeroing(self) -> T::InitializedSlice {
         self.init_by_filling(0_u8)
     }
 }
@@ -471,7 +471,7 @@ impl<'buffer, T> BufferRef<'buffer, T> {
 
 impl<'buffer, T> BufferRef<'buffer, T>
 where
-    T: Initialize,
+    T: InitializeIndirect,
 {
     #[inline]
     pub fn all_uninit(&self) -> &[MaybeUninit<u8>] {

@@ -2392,7 +2392,7 @@ pub unsafe trait InitializePartial: Initialize {
 pub unsafe trait InitializeIndirect: Sized {
     type InitializedSlice: AsRef<[Self::InitItem]> + AsMut<[Self::InitItem]>;
     type InitItem;
-    type UninitItem: Initialize;
+    type UninitItem: Initialize<Initialized = Self::InitItem>;
 
     fn as_maybe_uninit_slices(&self) -> &[Self::UninitItem];
     fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem];
@@ -2580,6 +2580,27 @@ unsafe impl<'a> InitializePartial for &'a mut [MaybeUninit<u8>] {
         <[MaybeUninit<u8>]>::split_at_mut(self, n)
     }
 }
+unsafe impl<T> InitializeIndirect for T
+where
+    T: Initialize,
+{
+    type InitializedSlice = Single<Self::InitItem>;
+    type InitItem = <Self as Initialize>::Initialized;
+    type UninitItem = Self;
+
+    #[inline]
+    fn as_maybe_uninit_slices(&self) -> &[Self::UninitItem] {
+        core::slice::from_ref(self)
+    }
+    #[inline]
+    fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem] {
+        core::slice::from_mut(self)
+    }
+
+    unsafe fn assume_init_all(self) -> Self::InitializedSlice {
+        Single(self.assume_init())
+    }
+}
 unsafe impl<'a, 'b, I: Initialization> InitializeIndirect for &'b mut [IoSliceMut<'a, I>] {
     type InitializedSlice = &'b mut [Self::InitItem];
     type InitItem = IoSliceMut<'a, Initialized>;
@@ -2701,4 +2722,71 @@ pub fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] 
 #[inline]
 pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     cast_slice_same_layout_mut(uninit)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Single<T>(T);
+
+impl<T> AsRef<[T]> for Single<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        core::slice::from_ref(&self.0)
+    }
+}
+impl<T> AsMut<[T]> for Single<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [T] {
+        core::slice::from_mut(&mut self.0)
+    }
+}
+impl<T> AsRef<T> for Single<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+impl<T> AsMut<T> for Single<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+impl<T> Borrow<T> for Single<T> {
+    #[inline]
+    fn borrow(&self) -> &T {
+        &self.0
+    }
+}
+impl<T> BorrowMut<T> for Single<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+impl<T> Borrow<[T]> for Single<T> {
+    #[inline]
+    fn borrow(&self) -> &[T] {
+        core::slice::from_ref(&self.0)
+    }
+}
+impl<T> BorrowMut<[T]> for Single<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [T] {
+        core::slice::from_mut(&mut self.0)
+    }
+}
+
+impl<T> ops::Deref for Single<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T> ops::DerefMut for Single<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }

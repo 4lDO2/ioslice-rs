@@ -2216,6 +2216,7 @@ mod tests {
     }
     #[test]
     #[cfg(all(unix, feature = "libc"))]
+    #[cfg_attr(miri, ignore)]
     fn abi_compatibility_with_iovec() {
         use std::convert::TryInto;
 

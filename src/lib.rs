@@ -91,6 +91,8 @@
 #[cfg(all(unix, windows))]
 compile_error!("cannot compile for both windows and unix");
 
+pub mod buffer;
+
 mod private {
     pub trait Sealed {}
 }

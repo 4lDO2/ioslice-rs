@@ -86,7 +86,7 @@
 //! function, that defaults to the safer wrapper.)
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]
+#![cfg_attr(feature = "nightly", feature(min_const_generics, new_uninit, slice_fill))]
 
 #[cfg(all(unix, windows))]
 compile_error!("cannot compile for both windows and unix");
@@ -2634,7 +2634,7 @@ unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
         #[cfg(feature = "nightly")]
         {
             #[forbid(unconditional_recursion)]
-            Box::assume_init(self)
+            Box::<[MaybeUninit<u8>]>::assume_init(self)
         }
         #[cfg(not(feature = "nightly"))]
         {

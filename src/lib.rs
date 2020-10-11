@@ -1550,6 +1550,7 @@ mod io_box {
     ///
     /// This will most likely never occur on real operating systems, but being able to handle this
     /// error is crucial when working in resource-limited environments, or in e.g. OS kernels.
+    #[derive(Debug)]
     pub struct AllocationError(Layout);
 
     impl AllocationError {
@@ -1559,6 +1560,15 @@ mod io_box {
             &self.0
         }
     }
+
+    impl fmt::Display for AllocationError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "failed to allocate {} bytes on a {}-byte alignment for buffer", self.layout().size(), self.layout().align())
+        }
+    }
+
+    #[cfg(feature = "std")]
+    impl std::error::Error for AllocationError {}
 
     impl<I: Initialization> IoBox<I> {
         // TODO: While really niche (except maybe for O_DIRECT where buffers need to be
@@ -2448,12 +2458,6 @@ pub trait InitializePartialExt: private3::Sealed + InitializePartial {
             .copy_from_slice(cast_init_to_uninit_slice(source));
         (unsafe { to_initialize.assume_init() }, residue)
     }
-}
-#[derive(Debug)]
-pub struct IndirectCopyError<T> {
-    pub original: T,
-    pub bytes_copied: usize,
-    pub slices_copied: usize,
 }
 pub trait InitializeIndirectExt: InitializeIndirect + private4::Sealed {
     #[inline]

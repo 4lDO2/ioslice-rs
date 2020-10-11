@@ -517,6 +517,10 @@ where
     pub fn init_by_filling(&mut self, byte: u8) {
         Fill::from_byte(byte).fill(self.by_ref())
     }
+    #[inline]
+    pub fn init_by_zeroing(&mut self) {
+        self.init_by_filling(0_u8)
+    }
 }
 
 #[cfg(test)]

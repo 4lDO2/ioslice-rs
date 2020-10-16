@@ -2354,7 +2354,7 @@ pub unsafe trait Initialize: Sized {
     /// [`assume_init`] when all bytes here are overwritten.
     ///
     /// [`assume_init`]: #tymethod.assume_init
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
 
     /// Unsafely assume that the value actually is initialized, getting a value of the initialized
     /// type.
@@ -2704,9 +2704,20 @@ pub unsafe fn cast_uninit_to_init_slice(uninit: &[MaybeUninit<u8>]) -> &[u8] {
 /// the layout of the slices themselves must not be relied upon. The initializedness information is
 /// lost as part of this cast, but can be recovered when initializing again or by using unsafe
 /// code.
+///
+/// # Safety
+///
+/// This is unsafe, since it allows a slice which is borrowed for a lifetime possibly shorter than
+/// `'static`, to be reused after the `MaybeUninit` slice has had `MaybeUninit::uninit()` values
+/// written to it. For this to be safe, the caller must only write initialized bytes to the
+/// returned slice.
+///
+/// This function is only meant to be used in generic contexts, unlike
+/// [`cast_init_to_uninit_slice`], which is used more often when copying initialized bytes to
+/// uninitialized bytes.
 #[inline]
-pub fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] {
-    unsafe { cast_slice_same_layout_mut(init) }
+pub unsafe fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    cast_slice_same_layout_mut(init)
 }
 /// Cast a mutable slice of possibly initialized bytes into a slice of initialized bytes, assuming
 /// it is initialized.

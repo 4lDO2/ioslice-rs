@@ -43,7 +43,7 @@ impl Fill {
 
 impl Source for Fill {
     fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
-        buf.uninit_part_mut().init_by_filling(self.byte());
+        buf.unfilled_part_mut().init_by_filling(self.byte());
 
         // SAFETY: The only safety invariant, that all previously-uninitialized bytes must be
         // initialized, is upheld since we have filled them.
@@ -194,9 +194,11 @@ pub struct Buffer<T> {
     bytes_filled: usize,
 }
 
-/// A reference to a [`Buffer`] or one buffer within several [`Buffers`].
+/// A reference to a [`Buffer`].
 pub struct BufferRef<'buffer, T> {
-    ref_: Ref<'buffer, T>,
+    // NOTE: The reference here is private, and never accessed using the API, _since we don't want
+    // an API user to be able to replace a `&mut Buffer` with a completely different one_.
+    inner: &'buffer mut Buffer<T>,
 }
 
 impl<T> Buffer<T> {
@@ -235,12 +237,12 @@ impl<T> Buffer<T> {
     }
     #[inline]
     pub fn bytes_initialized(&self) -> usize {
-        self.bytes_filled
+        self.bytes_initialized
     }
 
     #[inline]
     pub fn by_ref<'buffer>(&'buffer mut self) -> BufferRef<'buffer, T> {
-        BufferRef { ref_: Ref::Single(self) }
+        BufferRef { inner: self }
     }
 }
 
@@ -249,7 +251,9 @@ where
     T: Initialize,
 {
     fn debug_assert_valid_len(&self) {
-        debug_assert!(self.bytes_filled() <= self.total_buffer_size());
+        debug_assert!(self.bytes_filled() <= self.capacity());
+        debug_assert!(self.bytes_initialized() <= self.capacity());
+        debug_assert!(self.bytes_filled() <= self.bytes_initialized());
     }
 
     /// Retrieve a slice of a possibly uninitialized bytes, over the entire buffer.
@@ -269,24 +273,25 @@ where
     }
     /// Get the total size of the buffer that is being initialized.
     #[inline]
-    pub fn total_buffer_size(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.all_uninit().len()
     }
     /// Get the number of bytes that may be filled before the buffer is full.
     #[inline]
     pub fn bytes_to_fill(&self) -> usize {
-        debug_assert!(self.total_buffer_size() >= self.bytes_filled);
-        self.total_buffer_size().wrapping_sub(self.bytes_filled)
+        debug_assert!(self.capacity() >= self.bytes_filled);
+        self.capacity().wrapping_sub(self.bytes_filled)
     }
     /// Get the number of bytes that must be filled before the buffer gets fully initialized, and
     /// can be turned into an initialized type (e.g. `Box<[u8]>`).
     #[inline]
     pub fn bytes_to_init(&self) -> usize {
-        self.total_buffer_size().wrapping_sub(self.bytes_initialized)
+        debug_assert!(self.capacity() >= self.bytes_initialized);
+        self.capacity().wrapping_sub(self.bytes_initialized)
     }
     #[inline]
     pub fn is_completely_filled(&self) -> bool {
-        self.bytes_filled() == self.total_buffer_size()
+        self.bytes_filled() == self.capacity()
     }
     #[inline]
     pub fn is_partially_filled(&self) -> bool {
@@ -294,7 +299,7 @@ where
     }
     #[inline]
     pub fn is_completely_initialized(&self) -> bool {
-        self.bytes_initialized() == self.total_buffer_size()
+        self.bytes_initialized() == self.capacity()
     }
     #[inline]
     pub fn is_partially_initialized(&self) -> bool {
@@ -320,8 +325,8 @@ where
             // 3) the resulting pointer cannot overflow the pointer size. This is also impossible,
             //    since for `all` to be a valid slice, it must not wrap around in address space,
             //    between its start and end range.
-            let ptr = all.as_ptr().add(self.bytes_filled);
-            let len = all.len().wrapping_sub(self.bytes_filled);
+            let ptr = all.as_ptr().add(self.bytes_initialized);
+            let len = all.len().wrapping_sub(self.bytes_initialized);
 
             // SAFETY: This is safe, because:
             //
@@ -348,7 +353,7 @@ where
         // NOTE: Use of unsafe is only to eliminate bounds checks and maintain zero-cost.
         unsafe {
             let ptr = self.all_uninit().as_ptr();
-            let len = self.bytes_filled;
+            let len = self.bytes_initialized;
 
             // SAFETY: This is safe, due to the same invariants as with `uninit_part`, except for
             // the initialization invariant. We uphold this, by guaranteeing that the entire slice
@@ -374,8 +379,8 @@ where
 
             // SAFETY: This pointer arithmetic operation, is safe for the same reasons as with
             // `uninit_part`.
-            let ptr = orig_ptr.add(self.bytes_filled);
-            let len = orig_len.wrapping_sub(self.bytes_filled);
+            let ptr = orig_ptr.add(self.bytes_initialized);
+            let len = orig_len.wrapping_sub(self.bytes_initialized);
 
             // SAFETY: This is safe for the exact same reasons as with `uninit_part`, but that
             // there must not be any reference _at all_ to the inner slice. This is upheld by
@@ -392,12 +397,126 @@ where
 
         unsafe {
             let ptr = orig_ptr;
-            let len = self.bytes_filled;
+            let len = self.bytes_initialized;
 
             // SAFETY: This is safe for the exact same reasons as with `init_part`, except that we
             // also ensure that there is no access whatsoever to the inner data, since we are
             // borrowing `self` mutably.
             core::slice::from_raw_parts_mut(ptr as *mut u8, len)
+        }
+    }
+    #[inline]
+    pub fn filled_part(&self) -> &[u8] {
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let ptr = self.all_uninit().as_ptr();
+            let len = self.bytes_filled;
+
+            core::slice::from_raw_parts(ptr as *const u8, len)
+        }
+    }
+    #[inline]
+    pub fn filled_part_mut(&self) -> &mut [u8] {
+        let orig_ptr = unsafe {
+            self.all_uninit_mut().as_mut_ptr()
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let ptr = orig_ptr;
+            let len = self.bytes_filled;
+
+            core::slice::from_raw_parts_mut(ptr as *mut u8, len)
+        }
+    }
+    #[inline]
+    pub fn unfilled_part(&self) -> &[MaybeUninit<u8>] {
+        let (orig_ptr, orig_len) = {
+            let orig = self.all_uninit();
+
+            (orig.as_ptr(), orig.len())
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let ptr = orig_ptr.add(self.bytes_filled);
+            let len = orig_len.wrapping_sub(self.bytes_filled);
+
+            core::slice::from_raw_parts(ptr, len)
+        }
+    }
+    #[inline]
+    pub fn unfilled_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        let (orig_ptr, orig_len) = unsafe {
+            let orig = self.all_uninit_mut();
+            (orig.as_mut_ptr(), orig.len())
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let ptr = orig_ptr.add(self.bytes_filled);
+            let len = orig_len.wrapping_sub(self.bytes_filled);
+
+            core::slice::from_raw_parts_mut(ptr, len)
+        }
+    }
+    #[inline]
+    pub fn filled_unfilled_parts(&self) -> (&[u8], &[MaybeUninit<u8>]) {
+        (self.filled_part(), self.unfilled_part())
+    }
+    #[inline]
+    pub fn init_uninit_parts(&self) -> (&[u8], &[MaybeUninit<u8>]) {
+        (self.init_part(), self.uninit_part())
+    }
+
+    #[inline]
+    pub fn filled_unfilled_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
+        let (all_ptr, all_len) = unsafe {
+            let all = self.all_uninit_mut();
+
+            (all.as_mut_ptr(), all.len())
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let filled_base_ptr = all_ptr as *mut u8;
+            let filled_len = self.bytes_filled;
+
+            let unfilled_base_ptr = all_ptr.add(self.bytes_filled);
+            let unfilled_len = all_len.wrapping_sub(self.bytes_filled);
+
+            let filled = core::slice::from_raw_parts_mut(filled_base_ptr, filled_len);
+            let unfilled = core::slice::from_raw_parts_mut(unfilled_base_ptr, unfilled_len);
+
+            (filled, unfilled)
+        }
+    }
+    #[inline]
+    pub fn init_uninit_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
+        let (all_ptr, all_len) = unsafe {
+            let all = self.all_uninit_mut();
+
+            (all.as_mut_ptr(), all.len())
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let init_base_ptr = all_ptr as *mut u8;
+            let init_len = self.bytes_initialized;
+
+            let uninit_base_ptr = all_ptr.add(self.bytes_initialized);
+            let uninit_len = all_len.wrapping_sub(self.bytes_initialized);
+
+            let init = core::slice::from_raw_parts_mut(init_base_ptr, init_len);
+            let uninit = core::slice::from_raw_parts_mut(uninit_base_ptr, uninit_len);
+            
+            (init, uninit)
         }
     }
     /// Advance the internal cursor, that divides the initialized and uninitialized parts.
@@ -416,8 +535,8 @@ where
     /// will panic if the count, when added with the current number of bytes filled, neither
     /// overflows `isize::MAX`, nor the total size of the slice.
     #[inline]
-    pub unsafe fn advance(&mut self, count: usize) {
-        self.by_ref().advance(count)
+    pub unsafe fn assume_init_by(&mut self, count: usize) {
+        self.bytes_initialized = self.bytes_initialized.wrapping_add(count);
     }
 
     /// Advance the internal cursor to the end, marking the entire buffer as initialized.
@@ -430,9 +549,10 @@ where
     /// This is unsafe for the sole reason that every byte must have been written to for this to be
     /// safe.
     #[inline]
-    pub unsafe fn advance_to_end(&mut self) {
-        self.by_ref().advance_to_end()
+    pub unsafe fn assume_init_all(&mut self) {
+        self.bytes_initialized = self.capacity();
     }
+
     /// Assume that the entire buffer has been initialized, returning the inner initialized type.
     ///
     /// # Safety
@@ -463,6 +583,8 @@ where
     {
         source.try_fill(self.by_ref())
     }
+    /// Attempt to unwrap the inner container storing the bytes, and transform it into its
+    /// initialized counterpart, if and only if the buffer is fully initialized.
     #[inline]
     pub fn try_into_init(self) -> Result<T::Initialized, Self> {
         if self.is_completely_filled() {
@@ -588,7 +710,7 @@ where
 impl<'a> Buffer<&'a mut [u8]> {
     #[inline]
     pub fn from_slice_mut(slice: &'a mut [u8]) -> Self {
-        Self::new(slice).advance_init_counter().revert_fill_counter()
+        unsafe { Self::new(slice).advance_init_to_end() }
     }
 }
 impl<'a> Buffer<&'a mut [MaybeUninit<u8>]> {
@@ -601,9 +723,7 @@ impl<'a> Buffer<&'a mut [MaybeUninit<u8>]> {
 impl<'buffer, T> BufferRef<'buffer, T> {
     #[inline]
     pub fn bytes_filled(&self) -> usize {
-        match self.ref_ {
-            Ref::Single(buffer) => buffer.bytes_filled(),
-        }
+        self.inner.bytes_filled()
     }
 
     /// Reborrow the inner buffer, getting a buffer reference with a shorter lifetime.
@@ -611,7 +731,6 @@ impl<'buffer, T> BufferRef<'buffer, T> {
     pub fn by_ref<'shorter>(&'shorter mut self) -> BufferRef<'shorter, T> {
         BufferRef {
             inner: self.inner,
-            bytes_filled: self.bytes_filled,
         }
     }
 }
@@ -622,39 +741,39 @@ where
 {
     #[inline]
     pub fn all_uninit(&self) -> &[MaybeUninit<u8>] {
+        self.inner.all_uninit()
     }
     #[inline]
     pub unsafe fn all_uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self.inner.as_maybe_uninit_slice_mut()
+        self.inner.all_uninit_mut()
     }
     #[inline]
-    pub fn total_buffer_size(&self) -> usize {
-        self.all_uninit().len()
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity()
     }
     #[inline]
     pub fn bytes_to_fill(&self) -> usize {
-        debug_assert!(*self.bytes_filled <= self.total_buffer_size());
-        self.total_buffer_size().wrapping_sub(*self.bytes_filled)
+        self.inner.bytes_to_fill()
     }
     #[inline]
     pub fn uninit_part(&self) -> &[MaybeUninit<u8>] {
-        unsafe { Buffer::<T>::uninit_part_raw(self.all_uninit(), *self.bytes_filled) }
+        self.inner.uninit_part()
     }
     #[inline]
     pub fn init_part(&self) -> &[u8] {
-        unsafe { Buffer::<T>::init_part_raw(self.all_uninit(), *self.bytes_filled) }
+        self.inner.init_part()
     }
     #[inline]
     pub fn uninit_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe { Buffer::<T>::uninit_part_mut_raw(Buffer::<T>::all_mut_as_ptr(self.all_uninit_mut()), *self.bytes_filled) }
+        self.inner.uninit_part_mut()
     }
     #[inline]
     pub fn init_part_mut(&mut self) -> &mut [u8] {
-        unsafe { Buffer::<T>::init_part_mut_raw(Buffer::<T>::all_mut_as_ptr(self.all_uninit_mut()), *self.bytes_filled) }
+        self.inner.init_part_mut()
     }
     #[inline]
-    pub unsafe fn advance(&mut self, count: usize) {
-        *self.bytes_filled = self.bytes_filled.wrapping_add(count);
+    pub unsafe fn advance_init(&mut self, count: usize) {
+        self.inner.advance()
     }
     #[inline]
     pub unsafe fn advance_to_end(&mut self) {

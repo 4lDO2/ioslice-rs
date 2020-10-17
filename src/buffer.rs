@@ -10,165 +10,6 @@ use core::mem::MaybeUninit;
 
 use crate::{Initialize, InitializeIndirect, InitializeExt};
 
-pub trait Source {
-    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>);
-}
-pub trait FallibleSource {
-    type Error;
-
-    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error>;
-}
-
-pub trait FullSource {}
-pub unsafe trait TrustedFullSource {}
-
-// TODO: Asynchronous sources. These would only function as convenience wrappers, but might be
-// useful when async fn in traits.
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Fill {
-    byte: u8,
-}
-
-impl Fill {
-    #[inline]
-    pub const fn from_byte(byte: u8) -> Self {
-        Self { byte }
-    }
-    #[inline]
-    pub const fn byte(self) -> u8 {
-        self.byte
-    }
-}
-
-impl Source for Fill {
-    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
-        buf.unfilled_part_mut().init_by_filling(self.byte());
-
-        // SAFETY: The only safety invariant, that all previously-uninitialized bytes must be
-        // initialized, is upheld since we have filled them.
-        unsafe { buf.advance_to_end(); }
-    }
-}
-impl FallibleSource for Fill {
-    type Error = core::convert::Infallible;
-
-    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
-        Ok(self.fill(buf))
-    }
-}
-impl FullSource for Fill {}
-unsafe impl TrustedFullSource for Fill {}
-
-#[cfg(feature = "nightly")]
-pub struct FillConst<const BYTE: u8>;
-
-#[cfg(feature = "nightly")]
-impl<const BYTE: u8> Source for FillConst<BYTE> {
-    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) {
-        Fill::from_byte(BYTE).fill(buf)
-    }
-}
-#[cfg(feature = "nightly")]
-impl<const BYTE: u8> FallibleSource for FillConst<BYTE> {
-    type Error = core::convert::Infallible;
-
-    fn try_fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) -> Result<(), Self::Error> {
-        Fill::from_byte(BYTE).try_fill(buf)
-    }
-}
-#[cfg(feature = "nightly")]
-impl<const BYTE: u8> FullSource for FillConst<BYTE> {}
-
-#[derive(Debug)]
-pub struct Limit<S> {
-    inner: S,
-    limit: usize,
-}
-impl<S> Source for Limit<S>
-where
-    S: Source,
-{
-    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
-        let uninit_part_mut = buf.uninit_part_mut();
-        let len = core::cmp::min(uninit_part_mut.len(), self.limit);
-        let mut smaller_buffer = Buffer::new(&mut uninit_part_mut[..len]);
-        let smaller_buffer = smaller_buffer.by_ref();
-
-        self.inner.fill(smaller_buffer)
-    }
-}
-
-#[cfg(feature = "std")]
-pub struct Io<S> {
-    inner: S,
-}
-
-#[cfg(feature = "std")]
-impl<S> Source for Io<S>
-where
-    S: std::io::Read,
-{
-    fn fill<T: InitializeIndirect>(&mut self, buf: BufferRef<T>) {
-        match self.try_fill(buf) {
-            Ok(()) => (),
-            Err(_) => return,
-        }
-    }
-}
-#[cfg(feature = "std")]
-impl<S> FallibleSource for Io<S>
-where
-    S: std::io::Read,
-{
-    type Error = std::io::Error;
-
-    fn try_fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
-        // TODO: Compatibility with the ongoing RFC, https://github.com/rust-lang/rfcs/pull/2930.
-        // We don't want to zero the buffer even if it's already initialized!
-        let initialized = buf.uninit_part_mut().init_by_filling(0);
-
-        match self.inner.read(initialized) {
-            Ok(count) => {
-                assert!(count <= buf.bytes_to_fill());
-                Ok(unsafe { buf.advance(count) })
-            }
-            Err(error) => Err(error),
-        }
-    }
-}
-
-pub struct Sources<I> {
-    inner: I,
-}
-
-impl<I> Source for Sources<I>
-where
-    I: Iterator,
-    I::Item: Source,
-{
-    fn fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) {
-        while let Some(mut source) = self.inner.next() {
-            source.fill(buf.by_ref());
-        }
-    }
-}
-impl<I> FallibleSource for Sources<I>
-where
-    I: Iterator,
-    I::Item: FallibleSource,
-{
-    type Error = <<I as Iterator>::Item as FallibleSource>::Error;
-
-    fn try_fill<T: InitializeIndirect>(&mut self, mut buf: BufferRef<T>) -> Result<(), Self::Error> {
-        while let Some(mut source) = self.inner.next() {
-            source.try_fill(buf.by_ref())?;
-        }
-
-        Ok(())
-    }
-}
-
 pub struct Buffers<T> {
     inner: T,
     // TODO: Use a trait to omit this field when the type already is initialized.
@@ -186,15 +27,46 @@ pub struct Buffers<T> {
 /// always be moved out as uninitialized, but when the buffer _has_ been fully initialized, the
 /// buffer can be turned into the initialized equivalent.
 pub struct Buffer<T> {
-    // The inner data, which must implement `Initialize` to do anything useful with. The inner data
-    // points to a slice of possibly uninitialized bytes, and must always return the same slice in
-    // the trait.
+    // This is the Buffer type, that wraps a _single_ buffer that is not guaranteed to be fully
+    // initialized when wrapped.
+    //
+    // The inner data, which must implement `Initialize` to do anything useful with points to a
+    // slice of possibly uninitialized bytes, and must always return the same slice in the trait
+    // (which is an unsafe trait implementation contract).
     inner: T,
+    // Then we also have the initialization cursor, which marks the start of the uninitialized
+    // region. This is unrelated to the number of bytes filled into the buffer, but it must always
+    // be greater than or equal that.
+    //
+    // If this buffer is constructed from an already initialized slice, then this will be set to
+    // the total capacity of the buffer. This cursor can never be decreased, and it must be less
+    // than or equal to the total capacity.
+    //
+    // This allows dividing the buffer into an initialized region, and an uninitialized region.
     bytes_initialized: usize,
+    // And finally, the number of bytes filled, which does nothing but tracking the progress of
+    // filling the buffer. This must always be less than or equal to the number of bytes
+    // initialized.
+    //
+    // Like with the initialization cursor, this also allows dividing the buffer into an unfilled
+    // and a filled region, where the unfilled can be further divided into an unfilled but
+    // initialized region, and an unfilled and uninitialized region.
     bytes_filled: usize,
+
+    // Retrieving a mutable maybeuninit slice to a region where an initialized slice can be
+    // retrieved, and where the cursors indicate initializedness, this allows deinitialization,
+    // which makes `all_uninit_mut`, and `unfilled_mut` among others, unsafe.
+
+    // NOTE: If any of these contracts are broken inside the struct, expect UB. The
+    // _`debug_assert_valid_len`_ method will check this everywhere when debug assertions are
+    // enabled.
 }
 
-/// A reference to a [`Buffer`].
+/// A reference to a [`Buffer`], which is meant be a subset of the functionality offered by the
+/// fully owned buffer.
+///
+/// For example, it neither allows reading from the unfilled region, nor swapping out the buffer
+/// pointed to, with anything else.
 pub struct BufferRef<'buffer, T> {
     // NOTE: The reference here is private, and never accessed using the API, _since we don't want
     // an API user to be able to replace a `&mut Buffer` with a completely different one_.
@@ -278,7 +150,7 @@ where
     }
     /// Get the number of bytes that may be filled before the buffer is full.
     #[inline]
-    pub fn bytes_to_fill(&self) -> usize {
+    pub fn remaining(&self) -> usize {
         debug_assert!(self.capacity() >= self.bytes_filled);
         self.capacity().wrapping_sub(self.bytes_filled)
     }
@@ -289,22 +161,30 @@ where
         debug_assert!(self.capacity() >= self.bytes_initialized);
         self.capacity().wrapping_sub(self.bytes_initialized)
     }
+    /// Check whether the buffer is completely filled, and thus also initialized.
     #[inline]
-    pub fn is_completely_filled(&self) -> bool {
+    pub fn is_full(&self) -> bool {
         self.bytes_filled() == self.capacity()
     }
+    /// Check whether the buffer is empty. It can be partially or fully initialized however.
     #[inline]
-    pub fn is_partially_filled(&self) -> bool {
-        self.bytes_filled() > 0
+    pub fn is_empty(&self) -> bool {
+        self.bytes_filled() == 0
     }
+    /// Check whether the buffer is completely initialized. Note that this is unrelated to it being
+    /// filled.
     #[inline]
-    pub fn is_completely_initialized(&self) -> bool {
+    pub fn is_completely_init(&self) -> bool {
         self.bytes_initialized() == self.capacity()
     }
+    /// Check whether no single byte of the buffer has been initialized.
     #[inline]
-    pub fn is_partially_initialized(&self) -> bool {
-        self.bytes_initialized() > 0
+    pub fn is_completely_uninit(&self) -> bool {
+        self.bytes_initialized() == 0
     }
+    /// Retrieve a shared reference to the uninitialized part of the buffer. This is only included
+    /// for completeness, since apart from some corner cases where one does not have exclusive
+    /// access to the buffer but still wants to initialize it, is rather useless.
     #[inline]
     pub fn uninit_part(&self) -> &[MaybeUninit<u8>] {
         let all = self.all_uninit();
@@ -345,6 +225,8 @@ where
             core::slice::from_raw_parts(ptr, len)
         }
     }
+    /// Retrieve a shared slice to the initialized part of the buffer. Note that this is different
+    /// from the _filled_ part, as a buffer can be fully initialized but not filled.
     #[inline]
     pub fn init_part(&self) -> &[u8] {
         // Validate that bytes_filled is valid, when _debug assertions_ are enabled.
@@ -365,10 +247,12 @@ where
         }
     }
 
-    // NOTE: We extract pointers to avoid multiple mutable aliases when invoking
-    // core::slice::from_raw_parts_mut.
+    /// Get a mutable slice to the uninitialized part of the buffer. Note that this is different
+    /// from the unfilled part of it.
     #[inline]
     pub fn uninit_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        // NOTE: We extract pointers to avoid multiple mutable aliases when invoking
+        // core::slice::from_raw_parts_mut.
         let (orig_ptr, orig_len) = unsafe {
             let orig = self.all_uninit_mut();
             (orig.as_mut_ptr(), orig.len())
@@ -389,6 +273,8 @@ where
         }
     }
 
+    /// Retrieve a mutable slice to the initialized part of the buffer. Note that this is not the
+    /// same as the filled part.
     #[inline]
     pub fn init_part_mut(&mut self) -> &mut [u8] {
         let orig_ptr = unsafe {
@@ -405,6 +291,7 @@ where
             core::slice::from_raw_parts_mut(ptr as *mut u8, len)
         }
     }
+    /// Retrieve a shared slice to the filled part of the buffer.
     #[inline]
     pub fn filled_part(&self) -> &[u8] {
         unsafe {
@@ -416,6 +303,7 @@ where
             core::slice::from_raw_parts(ptr as *const u8, len)
         }
     }
+    /// Retrieve a mutable slice to the filled part of the buffer.
     #[inline]
     pub fn filled_part_mut(&self) -> &mut [u8] {
         let orig_ptr = unsafe {
@@ -431,6 +319,7 @@ where
             core::slice::from_raw_parts_mut(ptr as *mut u8, len)
         }
     }
+    /// Get a shared slice to the unfilled part, which may be uninitialized.
     #[inline]
     pub fn unfilled_part(&self) -> &[MaybeUninit<u8>] {
         let (orig_ptr, orig_len) = {
@@ -448,21 +337,27 @@ where
             core::slice::from_raw_parts(ptr, len)
         }
     }
+    /// Get a mutable reference to the unfilled part of the buffer, which may overlap with the
+    /// initialized-but-nonfilled region.
+    ///
+    /// # Safety
+    ///
+    /// Due to the possibility of an overlap between the part that is initialized and the part that
+    /// is unfilled, the caller must ensure that the resulting slice is never used to deinitialize
+    /// the buffer.
     #[inline]
-    pub fn unfilled_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    pub unsafe fn unfilled_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         let (orig_ptr, orig_len) = unsafe {
             let orig = self.all_uninit_mut();
             (orig.as_mut_ptr(), orig.len())
         };
 
-        unsafe {
-            self.debug_assert_valid_len();
+        self.debug_assert_valid_len();
 
-            let ptr = orig_ptr.add(self.bytes_filled);
-            let len = orig_len.wrapping_sub(self.bytes_filled);
+        let ptr = orig_ptr.add(self.bytes_filled);
+        let len = orig_len.wrapping_sub(self.bytes_filled);
 
-            core::slice::from_raw_parts_mut(ptr, len)
-        }
+        core::slice::from_raw_parts_mut(ptr, len)
     }
     #[inline]
     pub fn filled_unfilled_parts(&self) -> (&[u8], &[MaybeUninit<u8>]) {
@@ -474,7 +369,7 @@ where
     }
 
     #[inline]
-    pub fn filled_unfilled_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
+    pub unsafe fn filled_unfilled_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
         let (all_ptr, all_len) = unsafe {
             let all = self.all_uninit_mut();
 
@@ -519,6 +414,30 @@ where
             (init, uninit)
         }
     }
+
+    /// Get the initialized part of the unfilled part, if there is any.
+    #[inline]
+    pub fn unfilled_init_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        let (all_ptr, all_len) = unsafe {
+            let all = self.all_uninit_mut();
+
+            (all.as_mut_ptr(), all.len())
+        };
+
+        unsafe {
+            self.debug_assert_valid_len();
+
+            let unfilled_base_ptr = all_ptr.add(self.bytes_filled);
+            let unfilled_len = self.bytes_initialized.wrapping_sub(self.bytes_filled);
+
+            core::slice::from_raw_parts_mut(unfilled_base_ptr, unfilled_len)
+        }
+    }
+    /// Get the uninitialized part of the unfilled part, if there is any.
+    #[inline]
+    pub fn unfilled_uninit_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    }
+
     /// Advance the internal cursor, that divides the initialized and uninitialized parts.
     ///
     /// # Safety
@@ -568,23 +487,6 @@ where
     pub fn revert_to_start(&mut self) {
         self.by_ref().revert_to_start()
     }
-    /// Fill the buffer from a source, advancing until the buffer cannot be filled anymore.
-    ///
-    /// When the buffer is full, [`try_into_init`] shall succeed. It is however recommended to use
-    /// [`init_from_source`] or [`try_init_from_source`] to do a full initialization in one step.
-    pub fn fill_from_source(&mut self, mut source: impl Source) {
-        source.fill(self.by_ref())
-    }
-    /// Fill the buffer from a fallible source, advancing until the source either is out of bytes,
-    /// or if an error is encountered.
-    pub fn fill_from_fallible_source<S>(&mut self, mut source: S) -> Result<(), S::Error>
-    where
-        S: FallibleSource,
-    {
-        source.try_fill(self.by_ref())
-    }
-    /// Attempt to unwrap the inner container storing the bytes, and transform it into its
-    /// initialized counterpart, if and only if the buffer is fully initialized.
     #[inline]
     pub fn try_into_init(self) -> Result<T::Initialized, Self> {
         if self.is_completely_filled() {
@@ -593,32 +495,17 @@ where
             Err(self)
         }
     }
-    pub fn try_init_from_source(mut self, source: impl Source) -> Result<T::Initialized, Self> {
-        self.fill_from_source(source);
-        self.try_into_init()
+    #[inline]
+    pub fn fill_uninit_part(&mut self, with: u8) -> &mut [u8] {
+        crate::fill_uninit_slice(self.uninit_part_mut(), with)
     }
-    pub fn init_from_source(mut self, source: impl Source + FullSource) -> T::Initialized {
-        self.fill_from_source(source);
-
-        match self.try_into_init() {
-            Ok(t) => t,
-            Err(_) => unreachable!("trait contract broken: FullSource impl must guarantee that all buffers are fully initialized"),
-        }
+    #[inline]
+    pub fn uninit_part_zeroed(&mut self) -> &mut [u8] {
+        self.fill_uninit_part(0_u8)
     }
-    // TODO: try_init_from_fallible_source, etc.
-
-    // TODO: Use specialization to merge init_from_source and init_from_trusted_source into a
-    // single function.
-    pub fn init_from_trusted_source(mut self, source: impl Source + TrustedFullSource) -> T::Initialized {
-        self.fill_from_source(source);
-
-        unsafe { self.assume_init() }
-    }
-    pub fn init_by_filling(self, byte: u8) -> T::Initialized {
-        self.init_from_trusted_source(Fill::from_byte(byte))
-    }
-    pub fn init_by_zeroing(self) -> T::Initialized {
-        self.init_by_filling(0_u8)
+    #[inline]
+    pub fn append(&mut self, slice: &[u8]) {
+        todo!()
     }
 }
 impl<T> Buffers<T>

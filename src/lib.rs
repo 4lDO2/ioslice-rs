@@ -2408,7 +2408,7 @@ pub trait InitializeExt: private2::Sealed + Initialize {
         let slice = self.as_maybe_uninit_slice_mut();
 
         // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
-        // know that memcpy most likely is faster (and cleaner) than a loop.
+        // know that memset most likely is faster (and cleaner) than a loop.
         #[cfg(feature = "nightly")]
         {
             slice.fill(MaybeUninit::new(byte));
@@ -2733,6 +2733,13 @@ pub unsafe fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUnini
 #[inline]
 pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     cast_slice_same_layout_mut(uninit)
+}
+
+/// Fill a possibly uninitialized mutable slice of bytes, with the same `byte`, returning the
+/// initialized slice.
+#[inline]
+pub fn fill_uninit_slice(uninit: &mut [MaybeUninit<u8>], byte: u8) -> &mut [u8] {
+    uninit.init_by_filling(byte)
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]

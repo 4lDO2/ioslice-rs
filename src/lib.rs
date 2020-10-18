@@ -2059,7 +2059,7 @@ mod io_box {
             #[forbid(unconditional_recursion)]
             IoBox::as_maybe_uninit_slice(self)
         }
-        fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
             #[forbid(unconditional_recursion)]
             IoBox::as_maybe_uninit_slice_mut(self)
         }
@@ -2515,7 +2515,7 @@ unsafe impl<'a, I: Initialization> Initialize for IoSliceMut<'a, I> {
         IoSliceMut::as_maybe_uninit_slice(self)
     }
     #[inline]
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         #[forbid(unconditional_recursion)]
         IoSliceMut::as_maybe_uninit_slice_mut(self)
     }
@@ -2536,7 +2536,7 @@ unsafe impl<'a> Initialize for &'a mut [u8] {
         cast_init_to_uninit_slice(self)
     }
     #[inline]
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         cast_init_to_uninit_slice_mut(self)
     }
 
@@ -2553,7 +2553,7 @@ unsafe impl<'a> Initialize for &'a mut [MaybeUninit<u8>] {
         self
     }
     #[inline]
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
 
@@ -2631,7 +2631,7 @@ unsafe impl Initialize for Box<[u8]> {
         cast_init_to_uninit_slice(self)
     }
     #[inline]
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         cast_init_to_uninit_slice_mut(self)
     }
 
@@ -2649,7 +2649,7 @@ unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
         self
     }
     #[inline]
-    fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
 

@@ -315,13 +315,14 @@ mod tests {
     #[test]
     fn buffer_parts() {
         let mut slice = [MaybeUninit::uninit(); 32];
-        let mut buffer = Buffer::from_uninit_slice_mut(&mut slice);
+        let mut buffer = BufferInitializer::uninit(&mut slice[..]);
 
         assert_eq!(buffer.uninit_part().len(), 32);
         assert_eq!(buffer.uninit_part_mut().len(), 32);
         assert_eq!(buffer.init_part(), &[]);
         assert_eq!(buffer.init_part_mut(), &mut []);
-        assert!(!buffer.is_partially_filled());
-        assert!(!buffer.is_completely_filled());
+        assert!(!buffer.is_completely_init());
+
+        // TODO: Fill partially, and then check further.
     }
 }

@@ -2391,13 +2391,24 @@ pub unsafe trait InitializePartial: Initialize {
 // requirements. This could perhaps be abstracted, but the best solution would be to use
 // specialization, and maybe negative impls, to remove the possibility of conflict between the two
 // traits.
-pub unsafe trait InitializeIndirect: Sized {
-    type InitializedSlice: AsRef<[Self::InitItem]> + AsMut<[Self::InitItem]>;
-    type InitItem;
-    type UninitItem: Initialize<Initialized = Self::InitItem>;
+pub unsafe trait InitializeVectored: Sized {
+    /// The resulting slice of initialized vectors, which must be borrowable into a slice of the
+    /// initialized vector type.
+    ///
+    /// For example, when using [`IoSliceMut<Uninitialized>`] as the vector type, this type would
+    /// be [`[IoSliceMut<Initialized>]`]. Similarly, if the vector type were [`[&mut [u8]]`], then
+    /// this would be [`[u8]`], which obviously can obviously also be borrowed mutably or immutably
+    /// into `[u8]`.
+    type InitVectors: Borrow<[Self::InitVector]> + BorrowMut<[Self::InitVector]>;
+    type InitVector: Borrow<[u8]> + BorrowMut<[u8]>;
 
-    fn as_maybe_uninit_slices(&self) -> &[Self::UninitItem];
-    fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem];
+    /// The possibly uninitialized vector type, which must implement [`Initialize`], with
+    /// [`Self::InitVector`] being the target. Note that this does not necessarily need to deref
+    /// into [`MaybeUninit<u8>`], but can be anything that is convertible to it.
+    type UninitVector: Initialize<Initialized = Self::InitVector>;
+
+    fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector];
+    fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 
     unsafe fn assume_init_all(self) -> Self::InitializedSlice;
 }
@@ -2595,7 +2606,7 @@ where
         core::slice::from_ref(self)
     }
     #[inline]
-    fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem] {
+    unsafe fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem] {
         core::slice::from_mut(self)
     }
 

@@ -319,7 +319,7 @@ impl<T> BuffersInitializer<T> {
 
 impl<T> BuffersInitializer<T>
 where
-    T: crate::InitializeIndirect,
+    T: crate::InitializeVectored,
 {
 }
 

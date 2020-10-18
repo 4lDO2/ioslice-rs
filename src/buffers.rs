@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 
-use crate::{Initialize, InitializeIndirect};
+use crate::{Initialize, InitializeVectored};
 
 pub struct Buffers<T> {
     inner: T,
@@ -73,11 +73,11 @@ where
     }
 
     #[inline]
-    pub fn all_uninit_slices(&self) -> &[T::UninitItem] {
+    pub fn all_uninit_vectors(&self) -> &[T::UninitVector] {
         self.inner.as_maybe_uninit_slices()
     }
     #[inline]
-    pub fn all_uninit_slices_mut(&mut self) -> &mut [T::UninitItem] {
+    pub unsafe fn all_uninit_vectors_mut(&mut self) -> &mut [T::UninitVector] {
         self.inner.as_maybe_uninit_slices_mut()
     }
 

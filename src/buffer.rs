@@ -8,7 +8,7 @@
 
 use core::mem::MaybeUninit;
 
-use crate::{Initialize, InitializeIndirect, InitializeExt};
+use crate::{Initialize, InitializeExt};
 
 use crate::initializer::BufferInitializer;
 

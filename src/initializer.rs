@@ -1,7 +1,5 @@
 use core::mem::MaybeUninit;
 
-use crate::Initialize;
-
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
 /// data can always be moved out as uninitialized, but when the buffer _has_ been fully
@@ -53,7 +51,7 @@ impl<T> BufferInitializer<T> {
 }
 impl<T> BufferInitializer<T>
 where
-    T: Initialize,
+    T: crate::Initialize,
 {
     pub(crate) fn debug_assert_validity(&self) {
         debug_assert!(self.bytes_initialized <= self.capacity());
@@ -301,6 +299,30 @@ where
         }
     }
 }
+
+pub struct BuffersInitializer<T> {
+    inner: T,
+    vectors_initialized: usize,
+    bytes_initialized_for_vector: usize,
+}
+
+impl<T> BuffersInitializer<T> {
+    #[inline]
+    pub const fn uninit(inner: T) -> Self {
+        Self {
+            inner,
+            vectors_initialized: 0,
+            bytes_initialized_for_vector: 0,
+        }
+    }
+}
+
+impl<T> BuffersInitializer<T>
+where
+    T: crate::InitializeIndirect,
+{
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

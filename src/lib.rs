@@ -92,6 +92,8 @@
 compile_error!("cannot compile for both windows and unix");
 
 pub mod buffer;
+pub mod buffers;
+pub mod initializer;
 
 mod private {
     pub trait Sealed {}

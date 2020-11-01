@@ -45,7 +45,7 @@ impl<T> Buffer<T> {
     /// Move out the buffer initializer, which contains the inner buffer and initialization cursor,
     /// and get the filledness cursor.
     #[inline]
-    pub const fn into_raw_parts(self) -> (BufferInitializer<T>, usize) {
+    pub fn into_raw_parts(self) -> (BufferInitializer<T>, usize) {
         let Self { initializer, bytes_filled } = self;
 
         (initializer, bytes_filled)
@@ -55,7 +55,7 @@ impl<T> Buffer<T> {
     ///
     /// Use [`try_into_init`] if the buffer is initialized.
     #[inline]
-    pub const fn into_inner(self) -> T {
+    pub fn into_inner(self) -> T {
         self.initializer.into_inner()
     }
 
@@ -67,7 +67,7 @@ impl<T> Buffer<T> {
     }
 
     #[inline]
-    pub const fn by_ref<'buffer>(&'buffer mut self) -> BufferRef<'buffer, T> {
+    pub fn by_ref<'buffer>(&'buffer mut self) -> BufferRef<'buffer, T> {
         BufferRef { inner: self }
     }
 
@@ -126,7 +126,7 @@ where
     }
     /// Retrieve a mutable slice to the filled part of the buffer.
     #[inline]
-    pub fn filled_part_mut(&self) -> &mut [u8] {
+    pub fn filled_part_mut(&mut self) -> &mut [u8] {
         let orig_ptr = unsafe {
             self.initializer.all_uninit_mut().as_mut_ptr()
         };
@@ -283,7 +283,7 @@ where
     }
     #[inline]
     pub fn unfilled_uninit_part(&self) -> &[MaybeUninit<u8>] {
-        self.initializer.uninit_part_mut()
+        self.initializer.uninit_part()
     }
     /// Get the uninitialized part of the unfilled part, if there is any.
     #[inline]
@@ -342,9 +342,10 @@ where
     }
 }
 impl<'a> Buffer<&'a mut [u8]> {
+    // TODO: Use a trait that makes the dynamic counter statically set to full.
     #[inline]
     pub fn from_slice_mut(slice: &'a mut [u8]) -> Self {
-        let initializer = BufferInitializer::uninit(slice);
+        let mut initializer = BufferInitializer::uninit(slice);
         unsafe { initializer.advance_to_end(); }
         Self::from_initializer(initializer)
     }

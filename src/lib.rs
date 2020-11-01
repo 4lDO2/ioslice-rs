@@ -903,8 +903,8 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
     /// Cast any mutable slice of I/O slice into its uninitialized counterpart.
     #[inline]
-    pub fn cast_to_uninit_slices_mut(selves: &mut [Self]) -> &mut [IoSliceMut<'a, Uninitialized>] {
-        unsafe { cast_slice_same_layout_mut(selves) }
+    pub unsafe fn cast_to_uninit_slices_mut(selves: &mut [Self]) -> &mut [IoSliceMut<'a, Uninitialized>] {
+        cast_slice_same_layout_mut(selves)
     }
 
     /// Cast any slice of I/O slice into its uninitialized counterpart.
@@ -2147,17 +2147,6 @@ mod tests {
     }
 
     #[test]
-    fn partially_init_by_copying() {
-        let mut uninitialized_memory = [MaybeUninit::uninit(); 32];
-        let slice = IoSliceMut::from_uninit(&mut uninitialized_memory);
-
-        let data = *b"this is some data";
-        let (initialized, remainder) = slice.partially_init_by_copying(&data);
-        assert_eq!(&*initialized, data);
-        assert_eq!(remainder.len(), uninitialized_memory.len() - data.len());
-    }
-
-    #[test]
     #[cfg(all(windows, feature = "winapi"))]
     #[cfg_attr(target_pointer_width = "32", ignore)]
     #[should_panic = "IoBox (or any WSABUF-based I/O slice) cannot be larger in size than ULONG, which is 32 bits on Windows."]
@@ -2385,8 +2374,8 @@ pub unsafe trait InitializeVectored: Sized {
     /// be [`[IoSliceMut<Initialized>]`]. Similarly, if the vector type were [`[&mut [u8]]`], then
     /// this would be [`[u8]`], which obviously can obviously also be borrowed mutably or immutably
     /// into `[u8]`.
-    type InitVectors: Borrow<[Self::InitVector]> + BorrowMut<[Self::InitVector]>;
-    type InitVector: Borrow<[u8]> + BorrowMut<[u8]>;
+    type InitVectors: AsRef<[Self::InitVector]> + AsMut<[Self::InitVector]>;
+    type InitVector: AsRef<[u8]> + AsMut<[u8]>;
 
     /// The possibly uninitialized vector type, which must implement [`Initialize`], with
     /// [`Self::InitVector`] being the target. Note that this does not necessarily need to deref
@@ -2394,28 +2383,30 @@ pub unsafe trait InitializeVectored: Sized {
     type UninitVector: Initialize<Initialized = Self::InitVector>;
 
     fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector];
-    fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
+    unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 
     unsafe fn assume_init_all(self) -> Self::InitVectors;
 }
 pub trait InitializeExt: private2::Sealed + Initialize {
     #[inline]
     fn init_by_filling(mut self, byte: u8) -> Self::Initialized {
-        let slice = self.as_maybe_uninit_slice_mut();
+        unsafe {
+            let slice = self.as_maybe_uninit_slice_mut();
 
-        // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
-        // know that memset most likely is faster (and cleaner) than a loop.
-        #[cfg(feature = "nightly")]
-        {
-            slice.fill(MaybeUninit::new(byte));
+            // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
+            // know that memset most likely is faster (and cleaner) than a loop.
+            #[cfg(feature = "nightly")]
+            {
+                slice.fill(MaybeUninit::new(byte));
+            }
+
+            #[cfg(not(feature = "nightly"))]
+            for slice_byte in slice {
+                *slice_byte = MaybeUninit::new(byte);
+            }
+
+            self.assume_init()
         }
-
-        #[cfg(not(feature = "nightly"))]
-        for slice_byte in slice {
-            *slice_byte = MaybeUninit::new(byte);
-        }
-
-        unsafe { self.assume_init() }
     }
 
     #[inline]
@@ -2425,28 +2416,32 @@ pub trait InitializeExt: private2::Sealed + Initialize {
 
     #[inline]
     fn init_by_copying(mut self, source: &[u8]) -> Self::Initialized {
-        let slice = self.as_maybe_uninit_slice_mut();
-        assert_eq!(source.len(), slice.len(), "in order to fully initialize a slice-like type, the source slice must be exactly as large");
-        slice.copy_from_slice(cast_init_to_uninit_slice(source));
-        unsafe { self.assume_init() }
+        unsafe {
+            let slice = self.as_maybe_uninit_slice_mut();
+            assert_eq!(source.len(), slice.len(), "in order to fully initialize a slice-like type, the source slice must be exactly as large");
+            slice.copy_from_slice(cast_init_to_uninit_slice(source));
+            self.assume_init()
+        }
     }
 }
 pub trait InitializeVectoredExt: InitializeVectored + private4::Sealed {
     #[inline]
     fn init_by_filling(mut self, byte: u8) -> Self::InitVectors {
-        for maybe_uninit_slice in self.as_maybe_uninit_slices_mut() {
-            #[cfg(feature = "nightly")]
-            {
-                maybe_uninit_slice.as_maybe_uninit_slice_mut().fill(MaybeUninit::new(byte));
-            }
-            #[cfg(not(feature = "nightly"))]
-            {
-                for slice_byte in maybe_uninit_slice.as_maybe_uninit_slice_mut() {
-                    *slice_byte = MaybeUninit::new(byte);
+        unsafe {
+            for maybe_uninit_vector in self.as_maybe_uninit_vectors_mut() {
+                #[cfg(feature = "nightly")]
+                {
+                    maybe_uninit_vector.as_maybe_uninit_vectors_mut().fill(MaybeUninit::new(byte));
+                }
+                #[cfg(not(feature = "nightly"))]
+                {
+                    for slice_byte in maybe_uninit_vector.as_maybe_uninit_slice_mut() {
+                        *slice_byte = MaybeUninit::new(byte);
+                    }
                 }
             }
+            self.assume_init_all()
         }
-        unsafe { self.assume_init_all() }
     }
     #[inline]
     fn init_by_zeroing(self) -> Self::InitVectors {
@@ -2557,7 +2552,7 @@ unsafe impl<'a, 'b, I: Initialization> InitializeVectored for &'b mut [IoSliceMu
         IoSliceMut::cast_to_uninit_slices(self)
     }
     #[inline]
-    fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector] {
+    unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector] {
         IoSliceMut::cast_to_uninit_slices_mut(self)
     }
 

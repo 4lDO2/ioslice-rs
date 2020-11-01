@@ -42,7 +42,7 @@ impl<T> BufferInitializer<T> {
     }
 
     #[inline]
-    pub const fn into_inner(self) -> T {
+    pub fn into_inner(self) -> T {
         self.inner
     }
 
@@ -242,7 +242,7 @@ where
     }
     /// Finish the initialization by writing `byte` to the uninitialized region, and then get the
     /// final initialized type.
-    pub fn finish_init_by_filling(self, byte: u8) -> T::Initialized {
+    pub fn finish_init_by_filling(mut self, byte: u8) -> T::Initialized {
         self.fill_uninit_part(byte);
         unsafe { self.assume_init() }
     }
@@ -325,6 +325,18 @@ impl<T> BuffersInitializer<T> {
             bytes_initialized_for_vector: 0,
         }
     }
+    #[inline]
+    pub fn into_raw_parts(self) -> (T, usize, usize) {
+        let Self { inner, vectors_initialized, bytes_initialized_for_vector } = self;
+
+        (inner, vectors_initialized, bytes_initialized_for_vector)
+    }
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let (inner, _, _) = self.into_raw_parts();
+
+        inner
+    }
 }
 
 impl<T> BuffersInitializer<T>
@@ -337,7 +349,7 @@ where
     }
 
     #[inline]
-    fn all_vectors_uninit_mut(&mut self) -> &mut [T::UninitVector] {
+    unsafe fn all_vectors_uninit_mut(&mut self) -> &mut [T::UninitVector] {
         self.inner.as_maybe_uninit_vectors_mut()
     }
 
@@ -358,7 +370,11 @@ where
         self.debug_assert_validity();
 
         if self.all_vectors_uninit().len() != 0 {
-            Some(self.all_vectors_uninit_mut().get_unchecked_mut(self.vectors_initialized).as_maybe_uninit_slice_mut())
+            let vectors_initialized = self.vectors_initialized;
+
+            let all_vectors_uninit_mut = self.all_uninit_vectors_mut();
+            let current_vector_uninit_mut = all_vectors_uninit_mut.get_unchecked_mut(vectors_initialized);
+            Some(current_vector_uninit_mut.as_maybe_uninit_slice_mut())
         } else {
             None
         }
@@ -475,17 +491,17 @@ where
                 None => break,
             };
             if count >= current_uninit_part_len {
-                self.vectors_filled = self.vectors_filled
+                self.vectors_initialized = self.vectors_initialized
                     .checked_add(1)
                     .expect("reached usize::MAX when incrementing the buffer index");
-                self.bytes_filled_for_vector = 0;
+                self.bytes_initialized_for_vector = 0;
 
                 count -= current_uninit_part_len;
 
                 bytes_advanced -= current_uninit_part_len;
                 continue;
             } else {
-                self.bytes_filled_for_vector += current_uninit_part_len;
+                self.bytes_initialized_for_vector += current_uninit_part_len;
             }
         }
 

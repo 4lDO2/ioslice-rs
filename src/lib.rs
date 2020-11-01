@@ -2371,20 +2371,6 @@ pub unsafe trait Initialize: Sized {
     unsafe fn assume_init(self) -> Self::Initialized;
 }
 
-/// A trait for mutable slices, that can also be split. This allows partially initializing a slice
-/// and return both the initialized and the uninitialized part, completely in safe code.
-///
-/// # Safety
-///
-/// This trait is unsafe because the partial initialization helper functions, rely on the
-/// [`split_at`] method being implemented correctly.
-// TODO: Expand this section
-pub unsafe trait InitializePartial: Initialize {
-    /// Split the slice at `n`, into slices of the ranges `[0, n)` and `[n, len)`. The slices must
-    /// not overlap.
-    fn split_at(self, n: usize) -> (Self, Self);
-}
-
 /// A trait for slices (or owned memory) that contain possibly uninitialized slices themselves.
 // XXX: It would be __really__ useful to be able to unify the InitializeIndirectExt and
 // InitializeExt traits, since they provide an identical interface, but with different
@@ -2410,10 +2396,7 @@ pub unsafe trait InitializeVectored: Sized {
     fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector];
     fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 
-    unsafe fn assume_init_all(self) -> Self::InitializedSlice;
-}
-pub unsafe trait InitializeIndirectPartial: InitializeIndirect {
-    fn split_indirect_at(n: usize) -> (Self, Self);
+    unsafe fn assume_init_all(self) -> Self::InitVectors;
 }
 pub trait InitializeExt: private2::Sealed + Initialize {
     #[inline]
@@ -2448,36 +2431,9 @@ pub trait InitializeExt: private2::Sealed + Initialize {
         unsafe { self.assume_init() }
     }
 }
-pub trait InitializePartialExt: private3::Sealed + InitializePartial {
+pub trait InitializeVectoredExt: InitializeVectored + private4::Sealed {
     #[inline]
-    fn partially_init_by_filling(self, init_len: usize, byte: u8) -> (Self::Initialized, Self) {
-        // NOTE: This will validate the length.
-        let (mut to_initialize, residue) = self.split_at(init_len);
-
-        to_initialize
-            .as_maybe_uninit_slice_mut()
-            .init_by_filling(byte);
-        (unsafe { to_initialize.assume_init() }, residue)
-    }
-    #[inline]
-    fn partially_init_by_zeroing(self, init_len: usize) -> (Self::Initialized, Self) {
-        self.partially_init_by_filling(init_len, 0u8)
-    }
-
-    #[inline]
-    fn partially_init_by_copying(self, source: &[u8]) -> (Self::Initialized, Self) {
-        // NOTE: This will validate the length.
-        let (mut to_initialize, residue) = self.split_at(source.len());
-
-        to_initialize
-            .as_maybe_uninit_slice_mut()
-            .copy_from_slice(cast_init_to_uninit_slice(source));
-        (unsafe { to_initialize.assume_init() }, residue)
-    }
-}
-pub trait InitializeIndirectExt: InitializeIndirect + private4::Sealed {
-    #[inline]
-    fn init_by_filling(mut self, byte: u8) -> Self::InitializedSlice {
+    fn init_by_filling(mut self, byte: u8) -> Self::InitVectors {
         for maybe_uninit_slice in self.as_maybe_uninit_slices_mut() {
             #[cfg(feature = "nightly")]
             {
@@ -2493,7 +2449,7 @@ pub trait InitializeIndirectExt: InitializeIndirect + private4::Sealed {
         unsafe { self.assume_init_all() }
     }
     #[inline]
-    fn init_by_zeroing(self) -> Self::InitializedSlice {
+    fn init_by_zeroing(self) -> Self::InitVectors {
         self.init_by_filling(0u8)
     }
 }
@@ -2513,9 +2469,6 @@ mod private5 {
 
 impl<T> private2::Sealed for T where T: Initialize {}
 impl<T> InitializeExt for T where T: Initialize {}
-
-impl<T> private3::Sealed for T where T: InitializePartial {}
-impl<T> InitializePartialExt for T where T: InitializePartial {}
 
 unsafe impl<'a, I: Initialization> Initialize for IoSliceMut<'a, I> {
     type Initialized = IoSliceMut<'a, Initialized>;
@@ -2573,63 +2526,43 @@ unsafe impl<'a> Initialize for &'a mut [MaybeUninit<u8>] {
         cast_uninit_to_init_slice_mut(self)
     }
 }
-unsafe impl<'a, I: Initialization> InitializePartial for IoSliceMut<'a, I> {
-    fn split_at(self, n: usize) -> (Self, Self) {
-        #[forbid(unconditional_recursion)]
-        IoSliceMut::split_at(self, n)
-    }
-}
-unsafe impl<'a> InitializePartial for &'a mut [u8] {
-    #[inline]
-    fn split_at(self, n: usize) -> (Self, Self) {
-        #[forbid(unconditional_recursion)]
-        <[u8]>::split_at_mut(self, n)
-    }
-}
-unsafe impl<'a> InitializePartial for &'a mut [MaybeUninit<u8>] {
-    #[inline]
-    fn split_at(self, n: usize) -> (Self, Self) {
-        #[forbid(unconditional_recursion)]
-        <[MaybeUninit<u8>]>::split_at_mut(self, n)
-    }
-}
-unsafe impl<T> InitializeIndirect for T
+unsafe impl<T> InitializeVectored for T
 where
     T: Initialize,
 {
-    type InitializedSlice = Single<Self::InitItem>;
-    type InitItem = <Self as Initialize>::Initialized;
-    type UninitItem = Self;
+    type InitVectors = Single<Self::InitVector>;
+    type InitVector = <Self as Initialize>::Initialized;
+    type UninitVector = Self;
 
     #[inline]
-    fn as_maybe_uninit_slices(&self) -> &[Self::UninitItem] {
+    fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector] {
         core::slice::from_ref(self)
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem] {
+    unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector] {
         core::slice::from_mut(self)
     }
 
-    unsafe fn assume_init_all(self) -> Self::InitializedSlice {
+    unsafe fn assume_init_all(self) -> Self::InitVectors {
         Single(self.assume_init())
     }
 }
-unsafe impl<'a, 'b, I: Initialization> InitializeIndirect for &'b mut [IoSliceMut<'a, I>] {
-    type InitializedSlice = &'b mut [Self::InitItem];
-    type InitItem = IoSliceMut<'a, Initialized>;
-    type UninitItem = IoSliceMut<'a, Uninitialized>;
+unsafe impl<'a, 'b, I: Initialization> InitializeVectored for &'b mut [IoSliceMut<'a, I>] {
+    type InitVectors = &'b mut [Self::InitVector];
+    type InitVector = IoSliceMut<'a, Initialized>;
+    type UninitVector = IoSliceMut<'a, Uninitialized>;
 
     #[inline]
-    fn as_maybe_uninit_slices(&self) -> &[Self::UninitItem] {
+    fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector] {
         IoSliceMut::cast_to_uninit_slices(self)
     }
     #[inline]
-    fn as_maybe_uninit_slices_mut(&mut self) -> &mut [Self::UninitItem] {
+    fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector] {
         IoSliceMut::cast_to_uninit_slices_mut(self)
     }
 
     #[inline]
-    unsafe fn assume_init_all(self) -> Self::InitializedSlice {
+    unsafe fn assume_init_all(self) -> Self::InitVectors {
         IoSliceMut::cast_to_init_slices_mut(self)
     }
 }
@@ -2678,10 +2611,6 @@ unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
         }
     }
 }
-// NOTE: Box<[u8]> and Box<[MaybeUninit<u8>]> cannot implement InitializePartial, since you cannot
-// split allocations in half soundly. In order to convert Box<[MaybeUninit<u8>]>, the only way is
-// either initialize all of it, borrow it and initialize some of it, or use unsafe code.
-
 #[inline]
 unsafe fn cast_slice_same_layout<A, B>(a: &[A]) -> &[B] {
     core::slice::from_raw_parts(a.as_ptr() as *const B, a.len())

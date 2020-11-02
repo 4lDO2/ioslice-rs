@@ -464,9 +464,14 @@ where
     /// Counts the bytes that must be filled before the whole buffer is initialized.
     ///
     /// Note that this can be expensive if there are many buffers; it is O(n), where `n` is the
-    /// number of vectors. If all vectors are already filled, then this completes in constant time.
-    #[inline]
-    pub fn count_bytes_to_fill(&self) -> usize {
+    /// number of vectors that have not yet been initialized. If all vectors are already filled,
+    /// then this completes in constant time.
+    pub fn count_bytes_to_initialize(&self) -> usize {
+        let bytes_to_initialize_for_remaining = self.all_uninit_vectors().iter().skip(self.vectors_initialized + 1_usize).map(|buffer| buffer.as_maybe_uninit_slice().len()).sum::<usize>();
+
+        self.bytes_initialized_for_vector + bytes_to_initialize_for_remaining
+    }
+    pub fn count_total_bytes_in_all_vectors(&self) -> usize {
         self.all_uninit_vectors().iter().map(|buffer| buffer.as_maybe_uninit_slice().len()).sum()
     }
 
@@ -479,8 +484,17 @@ where
         self.inner.as_maybe_uninit_vectors_mut()
     }
     /// Advance the initialization cursor by `count` bytes, counting the number of bytes that were
-    /// advanced. This can be higher than the total number of bytes in the buffer, without panics
-    /// or UB.
+    /// advanced. The `count` input may be higher than the total number of bytes in the buffer,
+    /// without panics or UB.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, then `count` bytes in the vectors ranging from the current vector, to
+    /// subsequent vectors, must be initialized.
+    ///
+    /// Additionally, `count` must never overflow `isize::MAX`, but it may be larger than the total
+    /// number of bytes in the vectors (to avoid having to count them in the beginning, for
+    /// performance purposes).
     #[inline]
     pub unsafe fn advance(&mut self, mut count: usize) -> usize {
         let mut bytes_advanced = 0;
@@ -506,6 +520,10 @@ where
         }
 
         bytes_advanced
+    }
+    pub unsafe fn advance_current_vector_to_end(&mut self) {
+        self.vectors_initialized += 1;
+        self.bytes_initialized_for_vector = 0;
     }
 }
 

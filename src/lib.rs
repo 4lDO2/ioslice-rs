@@ -2329,6 +2329,8 @@ mod tests {
 ///
 /// In the future, when `&[u8]` starts implementing `AsRef<[MaybeUninit<u8>]>`, then this
 /// implementation must also ensure that the `AsRef` implementation is correct.
+// TODO: Generalize this to other slice types than [u8], which would be especially combined with
+// `zerocopy` struct-reinterpreting.
 pub unsafe trait Initialize: Sized {
     /// The type that this turns into after initialization.
     type Initialized: AsRef<[u8]> + AsMut<[u8]> + Sized;
@@ -2375,6 +2377,10 @@ pub unsafe trait InitializeVectored: Sized {
     /// this would be [`[u8]`], which obviously can obviously also be borrowed mutably or immutably
     /// into `[u8]`.
     type InitVectors: AsRef<[Self::InitVector]> + AsMut<[Self::InitVector]>;
+
+    // TODO: Should we require InitVector to have the exact same layout as UninitVector as an
+    // unsafe contract when implementing this trait, or should we allow assume_init_all to be
+    // non-zero-cost (because it would have to reallocate in the generic case).
     type InitVector: AsRef<[u8]> + AsMut<[u8]>;
 
     /// The possibly uninitialized vector type, which must implement [`Initialize`], with
@@ -2743,5 +2749,205 @@ impl<T> ops::DerefMut for Single<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+/// A wrapper over `T` that assumes all of `T` to be initialized
+#[repr(transparent)]
+#[derive(Clone, Copy, Default)]
+pub struct Init<T> {
+    inner: T,
+}
+
+impl<T> Init<T> {
+    #[inline]
+    pub const unsafe fn new(inner: T) -> Self {
+        Self {
+            inner,
+        }
+    }
+    #[inline]
+    pub unsafe fn from_slices(inner_slices: &[T]) -> &[Self] {
+        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
+        // same layout. The only contract that the caller has to follow, is that the data must
+        // actually be initialized.
+        core::slice::from_raw_parts(inner_slices.as_ptr() as *const Self, inner_slices.len())
+    }
+    #[inline]
+    pub unsafe fn from_slices_mut(inner_slices: &mut [T]) -> &mut [Self] {
+        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
+        // same layout. The only contract that the caller has to follow, is that the data must
+        // actually be initialized.
+        core::slice::from_raw_parts_mut(inner_slices.as_ptr() as *mut Self, inner_slices.len())
+    }
+    #[inline]
+    pub fn as_uninit_slices(selves: &[Self]) -> &[T] {
+        unsafe {
+            // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
+            // same layout.
+            //
+            // Since the returned slice is immutable, nothing can be deinitialized.
+            core::slice::from_raw_parts(selves.as_ptr() as *const T, selves.len())
+        }
+    }
+    #[inline]
+    pub unsafe fn as_uninit_slices_mut(selves: &mut [Self]) -> &mut [T] {
+        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
+        // same layout. The only contract that the caller has to follow, is that the data must
+        // never be de-initialized.
+        core::slice::from_raw_parts_mut(selves.as_ptr() as *mut T, selves.len())
+    }
+    #[inline]
+    pub fn from_ref(inner_slice: &T) -> &Self {
+        unsafe {
+            // SAFETY: This is safe because Init is #[repr(transparent)], making the references
+            // have the same layout. The only contract that the caller has to follow, is that the
+            // data must actually be initialized.
+            &*(inner_slice as *const T as *const Self)
+        }
+    }
+    #[inline]
+    pub fn from_mut(inner_slice: &mut T) -> &mut Self {
+        unsafe {
+            // SAFETY: This is safe because Init is #[repr(transparent)], making the references
+            // have the same layout. The only contract that the caller has to follow, is that the
+            // data must actually be initialized.
+            &mut *(inner_slice as *mut T as *mut Self)
+        }
+    }
+    #[inline]
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+    #[inline]
+    pub const fn inner(&self) -> &T {
+        &self.inner
+    }
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+impl<T> Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    pub fn get_init_ref(&self) -> &[u8] {
+        unsafe { crate::cast_uninit_to_init_slice(self.inner().as_maybe_uninit_slice()) }
+    }
+    #[inline]
+    pub fn get_init_mut(&mut self) -> &mut [u8] {
+        unsafe { crate::cast_uninit_to_init_slice_mut(self.inner_mut().as_maybe_uninit_slice_mut()) }
+    }
+    #[inline]
+    pub fn get_uninit_ref(&self) -> &[MaybeUninit<u8>] {
+        self.inner().as_maybe_uninit_slice()
+    }
+    #[inline]
+    pub unsafe fn get_uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.inner_mut().as_maybe_uninit_slice_mut()
+    }
+}
+impl<T> AsRef<[u8]> for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.get_init_ref()
+    }
+}
+impl<T> AsMut<[u8]> for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.get_init_mut()
+    }
+}
+impl<T> AsRef<[MaybeUninit<u8>]> for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn as_ref(&self) -> &[MaybeUninit<u8>] {
+        self.get_uninit_ref()
+    }
+}
+impl<T> Borrow<[u8]> for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn borrow(&self) -> &[u8] {
+        self.get_init_ref()
+    }
+}
+impl<T> BorrowMut<[u8]> for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        self.get_init_mut()
+    }
+}
+impl<T> ops::Deref for Init<T>
+where
+    T: Initialize,
+{
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.get_init_ref()
+    }
+}
+impl<T> ops::DerefMut for Init<T>
+where
+    T: Initialize,
+{
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        self.get_init_mut()
+    }
+}
+impl<T> PartialEq for Init<T>
+where
+    T: Initialize,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.get_init_ref() == other.get_init_ref()
+    }
+}
+impl<T> Eq for Init<T>
+where
+    T: Initialize,
+{
+}
+impl<T> PartialOrd for Init<T>
+where
+    T: Initialize,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl<T> Ord for Init<T>
+where
+    T: Initialize,
+{
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        Ord::cmp(self.get_init_ref(), other.get_init_ref())
+    }
+}
+impl<T> core::hash::Hash for Init<T>
+where
+    T: Initialize,
+{
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.get_init_ref().hash(state)
     }
 }

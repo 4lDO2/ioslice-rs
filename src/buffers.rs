@@ -47,9 +47,30 @@ impl<T> Buffers<T> {
     pub fn into_inner(self) -> T {
         self.into_initializer().into_inner()
     }
+    #[inline]
+    pub const fn vectors_filled(&self) -> usize {
+        self.vectors_filled
+    }
 }
 impl<T> Buffers<T>
 where
     T: InitializeVectored,
 {
+    fn debug_assert_validity(&self) {
+        debug_assert!(self.bytes_filled_for_vector <= isize::MAX as usize);
+        // TODO
+    }
+    #[inline]
+    pub fn total_vector_count(&self) -> usize {
+        self.initializer().total_vector_count()
+    }
+    #[inline]
+    pub fn vectors_remaining(&self) -> usize {
+        self.total_vector_count().wrapping_sub(self.vectors_filled())
+    }
+    pub fn count_bytes_to_fill(&self) -> usize {
+    }
+    pub fn count_total_bytes_in_all_vectors(&self) -> usize {
+        self.initializer().count_total_bytes_in_all_vectors()
+    }
 }

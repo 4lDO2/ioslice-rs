@@ -424,3 +424,22 @@ pub struct VectorPartsMut<'a> {
     pub unfilled_init: &'a mut [u8],
     pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn baisc_buffers_ops() {
+        let mut a = [MaybeUninit::<u8>::uninit(); 32];
+        let mut b = [MaybeUninit::uninit(); 8];
+        let mut c = [MaybeUninit::uninit(); 16];
+        let mut d = [MaybeUninit::uninit(); 9];
+
+        let vectors = [&mut a[..], &mut b[..], &mut c[..], &mut d[..]];
+        let buffers = Buffers::new(vectors);
+
+        assert_eq!(buffers.vectors_filled(), 0);
+        //assert_eq!(buffers.vectors_remaining(), 4);
+    }
+}

@@ -2627,6 +2627,54 @@ unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
         }
     }
 }
+#[cfg(feature = "alloc")]
+unsafe impl Initialize for Vec<u8> {
+    type Initialized = Vec<u8>;
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        cast_init_to_uninit_slice(&*self)
+    }
+    #[inline]
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        // TODO: Give the whole allocation, and not just the length set? With MaybeUninit, calling
+        // set_len is safe.
+        cast_init_to_uninit_slice_mut(&mut *self)
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> Self::Initialized {
+        self
+    }
+}
+#[cfg(feature = "alloc")]
+unsafe impl Initialize for Vec<MaybeUninit<u8>> {
+    type Initialized = Vec<u8>;
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        &*self
+    }
+    #[inline]
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        &mut *self
+    }
+    unsafe fn assume_init(mut self) -> Self::Initialized {
+        //let (ptr, cap, len) = Vec::into_raw_parts(self);
+
+        let (ptr, cap, len) = {
+            let ptr = self.as_mut_ptr();
+            let cap = self.capacity();
+            let len = self.len();
+
+            core::mem::forget(self);
+
+            (ptr, cap, len)
+        };
+
+        Vec::from_raw_parts(ptr as *mut u8, cap, len)
+    }
+}
 #[inline]
 unsafe fn cast_slice_same_layout<A, B>(a: &[A]) -> &[B] {
     core::slice::from_raw_parts(a.as_ptr() as *const B, a.len())

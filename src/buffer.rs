@@ -323,11 +323,15 @@ where
     }
     #[inline]
     pub fn append(&mut self, slice: &[u8]) {
-        // TODO: If this would ever turn out to be worth it, this could be optimized as bounds
-        // checking gets redundant here.
-        let unfilled_part = unsafe { self.unfilled_part_mut() };
-        assert!(slice.len() <= unfilled_part.len());
-        unfilled_part[..slice.len()].copy_from_slice(crate::cast_init_to_uninit_slice(slice));
+        unsafe {
+            // TODO: If this would ever turn out to be worth it, this could be optimized as bounds
+            // checking gets redundant here.
+            let unfilled_part = self.unfilled_part_mut();
+            assert!(slice.len() <= unfilled_part.len());
+            unfilled_part[..slice.len()].copy_from_slice(crate::cast_init_to_uninit_slice(slice));
+            self.initializer_mut().advance(slice.len());
+            self.advance(slice.len());
+        }
     }
     #[inline]
     pub fn advance(&mut self, count: usize) {
@@ -435,5 +439,75 @@ where
 
 #[cfg(test)]
 mod tests {
-    //use super::*;
+    use super::*;
+
+    #[test]
+    fn basic_buffer_ops() {
+        let mut buffer = Buffer::uninit(vec! [MaybeUninit::<u8>::uninit(); 32]);
+        assert_eq!(buffer.capacity(), 32);
+        assert_eq!(buffer.remaining(), 32);
+        assert!(buffer.is_empty());
+        assert!(!buffer.is_full());
+        assert!(buffer.initializer().is_completely_uninit());
+        assert!(!buffer.initializer().is_completely_init());
+        assert_eq!(buffer.initializer().bytes_initialized(), 0);
+        assert_eq!(buffer.initializer().remaining(), 32);
+        assert_eq!(buffer.filled_part(), &[]);
+        assert_eq!(buffer.unfilled_part().len(), 32);
+        assert_eq!(buffer.filled_part_mut(), &mut []);
+        assert_eq!(unsafe { buffer.unfilled_part_mut().len() }, 32);
+        // TODO: more
+
+        let src = b"I am a really nice slice!";
+        let modified = b"I am a really wise slice!";
+
+        buffer.append(src);
+
+        assert!(!buffer.is_empty());
+        assert!(!buffer.is_full());
+        assert_eq!(buffer.filled_part(), src);
+        assert_eq!(buffer.filled_part_mut(), src);
+        assert!(!buffer.initializer().is_completely_init());
+        assert!(!buffer.initializer().is_completely_uninit());
+        assert_eq!(buffer.initializer().init_part(), src);
+        assert_eq!(buffer.initializer_mut().init_part_mut(), src);
+        assert_eq!(buffer.bytes_filled(), src.len());
+        assert_eq!(buffer.remaining(), 32 - src.len());
+
+        {
+            let slice_mut = buffer.filled_part_mut();
+            slice_mut[14] = b'w';
+            slice_mut[16] = b's';
+        }
+
+        assert!(!buffer.is_empty());
+        assert!(!buffer.is_full());
+        assert_eq!(buffer.filled_part(), modified);
+        assert_eq!(buffer.filled_part_mut(), modified);
+        assert_eq!(buffer.initializer().init_part(), modified);
+        assert_eq!(buffer.initializer_mut().init_part_mut(), modified);
+        assert_eq!(buffer.bytes_filled(), src.len());
+        assert_eq!(buffer.remaining(), 32 - src.len());
+        assert_eq!(buffer.unfilled_part().len(), 32 - src.len());
+        assert_eq!(unsafe { buffer.unfilled_part_mut().len() }, 32 - src.len());
+
+        // TODO: Refill the buffer but keep the initializer. Then make sure that the unfilled init
+        // and unfilled uninit parts are correctly implemented.
+
+        let rest = b" Right?";
+        buffer.append(rest);
+
+        assert_eq!(buffer.bytes_filled(), 32);
+        assert!(!buffer.is_empty());
+        assert!(buffer.is_full());
+        assert_eq!(buffer.remaining(), 0);
+
+        let total = b"I am a really wise slice! Right?";
+        assert_eq!(buffer.filled_part(), total);
+        assert_eq!(buffer.filled_part_mut(), total);
+        assert_eq!(buffer.initializer().remaining(), 0);
+        assert_eq!(buffer.initializer().bytes_initialized(), 32);
+        assert!(buffer.initializer().is_completely_init());
+        assert!(!buffer.initializer().is_completely_uninit());
+    }
 }

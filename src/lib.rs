@@ -86,7 +86,10 @@
 //! function, that defaults to the safer wrapper.)
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(min_const_generics, new_uninit, slice_fill))]
+#![cfg_attr(
+    feature = "nightly",
+    feature(min_const_generics, new_uninit, slice_fill)
+)]
 
 #[cfg(all(unix, windows))]
 compile_error!("cannot compile for both windows and unix");
@@ -903,7 +906,9 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
     /// Cast any mutable slice of I/O slice into its uninitialized counterpart.
     #[inline]
-    pub unsafe fn cast_to_uninit_slices_mut(selves: &mut [Self]) -> &mut [IoSliceMut<'a, Uninitialized>] {
+    pub unsafe fn cast_to_uninit_slices_mut(
+        selves: &mut [Self],
+    ) -> &mut [IoSliceMut<'a, Uninitialized>] {
         cast_slice_same_layout_mut(selves)
     }
 
@@ -914,7 +919,9 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
     /// Cast any mutable slice of I/O slice into its uninitialized counterpart.
     #[inline]
-    pub unsafe fn cast_to_init_slices_mut(selves: &mut [Self]) -> &mut [IoSliceMut<'a, Initialized>] {
+    pub unsafe fn cast_to_init_slices_mut(
+        selves: &mut [Self],
+    ) -> &mut [IoSliceMut<'a, Initialized>] {
         cast_slice_same_layout_mut(selves)
     }
 
@@ -1567,7 +1574,12 @@ mod io_box {
 
     impl fmt::Display for AllocationError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "failed to allocate {} bytes on a {}-byte alignment for buffer", self.layout().size(), self.layout().align())
+            write!(
+                f,
+                "failed to allocate {} bytes on a {}-byte alignment for buffer",
+                self.layout().size(),
+                self.layout().align()
+            )
         }
     }
 
@@ -2438,7 +2450,9 @@ pub trait InitializeVectoredExt: InitializeVectored + private4::Sealed {
             for maybe_uninit_vector in self.as_maybe_uninit_vectors_mut() {
                 #[cfg(feature = "nightly")]
                 {
-                    maybe_uninit_vector.as_maybe_uninit_vectors_mut().fill(MaybeUninit::new(byte));
+                    maybe_uninit_vector
+                        .as_maybe_uninit_vectors_mut()
+                        .fill(MaybeUninit::new(byte));
                 }
                 #[cfg(not(feature = "nightly"))]
                 {
@@ -2763,9 +2777,7 @@ pub struct Init<T> {
 impl<T> Init<T> {
     #[inline]
     pub const unsafe fn new(inner: T) -> Self {
-        Self {
-            inner,
-        }
+        Self { inner }
     }
     #[inline]
     pub unsafe fn from_slices(inner_slices: &[T]) -> &[Self] {
@@ -2839,7 +2851,9 @@ where
     }
     #[inline]
     pub fn get_init_mut(&mut self) -> &mut [u8] {
-        unsafe { crate::cast_uninit_to_init_slice_mut(self.inner_mut().as_maybe_uninit_slice_mut()) }
+        unsafe {
+            crate::cast_uninit_to_init_slice_mut(self.inner_mut().as_maybe_uninit_slice_mut())
+        }
     }
     #[inline]
     pub fn get_uninit_ref(&self) -> &[MaybeUninit<u8>] {
@@ -2923,11 +2937,7 @@ where
         self.get_init_ref() == other.get_init_ref()
     }
 }
-impl<T> Eq for Init<T>
-where
-    T: Initialize,
-{
-}
+impl<T> Eq for Init<T> where T: Initialize {}
 impl<T> PartialOrd for Init<T>
 where
     T: Initialize,

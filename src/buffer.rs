@@ -46,7 +46,10 @@ impl<T> Buffer<T> {
     /// and get the filledness cursor.
     #[inline]
     pub fn into_raw_parts(self) -> (BufferInitializer<T>, usize) {
-        let Self { initializer, bytes_filled } = self;
+        let Self {
+            initializer,
+            bytes_filled,
+        } = self;
 
         (initializer, bytes_filled)
     }
@@ -127,9 +130,7 @@ where
     /// Retrieve a mutable slice to the filled part of the buffer.
     #[inline]
     pub fn filled_part_mut(&mut self) -> &mut [u8] {
-        let orig_ptr = unsafe {
-            self.initializer.all_uninit_mut().as_mut_ptr()
-        };
+        let orig_ptr = unsafe { self.initializer.all_uninit_mut().as_mut_ptr() };
 
         unsafe {
             self.debug_assert_validity();
@@ -175,7 +176,7 @@ where
     /// [`unfilled_init_uninit_parts_mut`].
     #[inline]
     pub unsafe fn unfilled_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        let (orig_ptr, orig_len) = unsafe {
+        let (orig_ptr, orig_len) = {
             let orig = self.initializer.all_uninit_mut();
             (orig.as_mut_ptr(), orig.len())
         };
@@ -196,7 +197,11 @@ where
     /// uninitialized part.
     #[inline]
     pub fn all_parts(&self) -> (&[u8], &[u8], &[MaybeUninit<u8>]) {
-        (self.filled_part(), self.unfilled_init_part(), self.unfilled_uninit_part())
+        (
+            self.filled_part(),
+            self.unfilled_init_part(),
+            self.unfilled_uninit_part(),
+        )
     }
 
     #[inline]
@@ -214,14 +219,19 @@ where
             let filled_len = self.bytes_filled;
 
             let unfilled_init_base_ptr = all_ptr.add(self.bytes_filled) as *mut u8;
-            let unfilled_init_len = self.initializer.bytes_initialized().wrapping_sub(self.bytes_filled);
+            let unfilled_init_len = self
+                .initializer
+                .bytes_initialized()
+                .wrapping_sub(self.bytes_filled);
 
             let unfilled_uninit_base_ptr = all_ptr.add(self.initializer.bytes_initialized());
             let unfilled_uninit_len = all_len.wrapping_sub(self.initializer.bytes_initialized());
 
             let filled = core::slice::from_raw_parts_mut(filled_base_ptr, filled_len);
-            let unfilled_init = core::slice::from_raw_parts_mut(unfilled_init_base_ptr, unfilled_init_len);
-            let unfilled_uninit = core::slice::from_raw_parts_mut(unfilled_uninit_base_ptr, unfilled_uninit_len);
+            let unfilled_init =
+                core::slice::from_raw_parts_mut(unfilled_init_base_ptr, unfilled_init_len);
+            let unfilled_uninit =
+                core::slice::from_raw_parts_mut(unfilled_uninit_base_ptr, unfilled_uninit_len);
 
             (filled, unfilled_init, unfilled_uninit)
         }
@@ -236,13 +246,13 @@ where
     /// by writing [`MaybeUninit::uninit()`] to it.
     #[inline]
     pub unsafe fn filled_unfilled_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
-        let (all_ptr, all_len) = unsafe {
+        let (all_ptr, all_len) = {
             let all = self.initializer.all_uninit_mut();
 
             (all.as_mut_ptr(), all.len())
         };
 
-        unsafe {
+        {
             self.debug_assert_validity();
 
             let filled_base_ptr = all_ptr as *mut u8;
@@ -265,10 +275,12 @@ where
 
             let all = self.initializer.all_uninit();
             let all_ptr = all.as_ptr();
-            let all_len = all.len();
 
             let unfilled_init_base_ptr = all_ptr.add(self.bytes_filled) as *const u8;
-            let unfilled_init_len = self.initializer.bytes_initialized().wrapping_sub(self.bytes_filled);
+            let unfilled_init_len = self
+                .initializer
+                .bytes_initialized()
+                .wrapping_sub(self.bytes_filled);
 
             core::slice::from_raw_parts(unfilled_init_base_ptr, unfilled_init_len)
         }
@@ -319,12 +331,19 @@ where
     }
     #[inline]
     pub fn advance(&mut self, count: usize) {
-        assert!(self.initializer.bytes_initialized().wrapping_sub(self.bytes_filled) >= count, "advancing filledness cursor beyond the initialized region");
+        assert!(
+            self.initializer
+                .bytes_initialized()
+                .wrapping_sub(self.bytes_filled)
+                >= count,
+            "advancing filledness cursor beyond the initialized region"
+        );
         self.bytes_filled = self.bytes_filled.wrapping_add(count);
     }
     pub unsafe fn assume_init(&mut self, count: usize) {
         self.bytes_filled = self.bytes_filled.wrapping_add(count);
-        self.initializer.bytes_initialized = core::cmp::min(self.bytes_filled, self.initializer.bytes_initialized);
+        self.initializer.bytes_initialized =
+            core::cmp::min(self.bytes_filled, self.initializer.bytes_initialized);
 
         self.debug_assert_validity();
     }
@@ -334,11 +353,15 @@ where
     }
     #[inline]
     pub fn fill_by_repeating(&mut self, byte: u8) {
-        unsafe { self.unfilled_part_mut().init_by_filling(byte); }
+        unsafe {
+            self.unfilled_part_mut().init_by_filling(byte);
+        }
     }
     #[inline]
     pub fn fill_by_zeroing(&mut self) {
-        unsafe { self.unfilled_part_mut().init_by_zeroing(); }
+        unsafe {
+            self.unfilled_part_mut().init_by_zeroing();
+        }
     }
 }
 impl<'a> Buffer<&'a mut [u8]> {
@@ -346,7 +369,9 @@ impl<'a> Buffer<&'a mut [u8]> {
     #[inline]
     pub fn from_slice_mut(slice: &'a mut [u8]) -> Self {
         let mut initializer = BufferInitializer::uninit(slice);
-        unsafe { initializer.advance_to_end(); }
+        unsafe {
+            initializer.advance_to_end();
+        }
         Self::from_initializer(initializer)
     }
 }
@@ -366,9 +391,7 @@ impl<'buffer, T> BufferRef<'buffer, T> {
     /// Reborrow the inner buffer, getting a buffer reference with a shorter lifetime.
     #[inline]
     pub fn by_ref<'shorter>(&'shorter mut self) -> BufferRef<'shorter, T> {
-        BufferRef {
-            inner: self.inner,
-        }
+        BufferRef { inner: self.inner }
     }
 }
 
@@ -412,6 +435,5 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    //use super::*;
 }

@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 
-use crate::{Initialize, InitializeVectored};
+use crate::Initialize;
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -24,7 +24,6 @@ pub struct BufferInitializer<T> {
     //
     // This allows dividing the buffer into an initialized region, and an uninitialized region.
     pub(crate) bytes_initialized: usize,
-
     // NOTE: If any of these contracts are broken inside the struct, expect UB. The
     // _`debug_assert_valid_len`_ method will check this everywhere when debug assertions are
     // enabled.
@@ -75,7 +74,10 @@ where
 
     #[inline]
     pub fn into_raw_parts(self) -> (T, usize) {
-        let Self { inner, bytes_initialized } = self;
+        let Self {
+            inner,
+            bytes_initialized,
+        } = self;
         (inner, bytes_initialized)
     }
 
@@ -216,9 +218,7 @@ where
     /// same as the filled part.
     #[inline]
     pub fn init_part_mut(&mut self) -> &mut [u8] {
-        let orig_ptr = unsafe {
-            self.all_uninit_mut().as_mut_ptr()
-        };
+        let orig_ptr = unsafe { self.all_uninit_mut().as_mut_ptr() };
 
         unsafe {
             let ptr = orig_ptr;
@@ -296,7 +296,7 @@ where
 
             let init = core::slice::from_raw_parts_mut(init_base_ptr, init_len);
             let uninit = core::slice::from_raw_parts_mut(uninit_base_ptr, uninit_len);
-            
+
             (init, uninit)
         }
     }
@@ -327,7 +327,11 @@ impl<T> BuffersInitializer<T> {
     }
     #[inline]
     pub fn into_raw_parts(self) -> (T, usize, usize) {
-        let Self { inner, vectors_initialized, bytes_initialized_for_vector } = self;
+        let Self {
+            inner,
+            vectors_initialized,
+            bytes_initialized_for_vector,
+        } = self;
 
         (inner, vectors_initialized, bytes_initialized_for_vector)
     }
@@ -348,18 +352,17 @@ where
         self.inner.as_maybe_uninit_vectors()
     }
 
-    #[inline]
-    unsafe fn all_vectors_uninit_mut(&mut self) -> &mut [T::UninitVector] {
-        self.inner.as_maybe_uninit_vectors_mut()
-    }
-
     /// Retrieve the current buffer immutably, provided that there is one.
     #[inline]
     pub fn current_vector_all(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         if self.all_vectors_uninit().len() != 0 {
-            Some(unsafe { self.all_vectors_uninit().get_unchecked(self.vectors_initialized).as_maybe_uninit_slice() })
+            Some(unsafe {
+                self.all_vectors_uninit()
+                    .get_unchecked(self.vectors_initialized)
+                    .as_maybe_uninit_slice()
+            })
         } else {
             None
         }
@@ -373,7 +376,8 @@ where
             let vectors_initialized = self.vectors_initialized;
 
             let all_vectors_uninit_mut = self.all_uninit_vectors_mut();
-            let current_vector_uninit_mut = all_vectors_uninit_mut.get_unchecked_mut(vectors_initialized);
+            let current_vector_uninit_mut =
+                all_vectors_uninit_mut.get_unchecked_mut(vectors_initialized);
             Some(current_vector_uninit_mut.as_maybe_uninit_slice_mut())
         } else {
             None
@@ -406,7 +410,8 @@ where
             let uninit_vector_base_ptr = vector.as_ptr().add(self.bytes_initialized_for_vector);
             let uninit_vector_len = vector.len().wrapping_sub(self.bytes_initialized_for_vector);
 
-            let uninit_vector = core::slice::from_raw_parts(uninit_vector_base_ptr, uninit_vector_len);
+            let uninit_vector =
+                core::slice::from_raw_parts(uninit_vector_base_ptr, uninit_vector_len);
 
             (init_vector, uninit_vector)
         })
@@ -426,7 +431,9 @@ where
         Some(uninit_part_mut)
     }
     #[inline]
-    pub fn current_vector_init_uninit_parts_mut(&mut self) -> Option<(&mut [u8], &mut [MaybeUninit<u8>])> {
+    pub fn current_vector_init_uninit_parts_mut(
+        &mut self,
+    ) -> Option<(&mut [u8], &mut [MaybeUninit<u8>])> {
         let (orig_base_ptr, orig_len) = unsafe {
             let vector = self.current_vector_all_mut()?;
 
@@ -436,19 +443,24 @@ where
             let init_vector_base_ptr = orig_base_ptr as *mut u8;
             let init_vector_len = self.bytes_initialized_for_vector;
 
-            let init_vector = core::slice::from_raw_parts_mut(init_vector_base_ptr, init_vector_len);
+            let init_vector =
+                core::slice::from_raw_parts_mut(init_vector_base_ptr, init_vector_len);
 
             let uninit_vector_base_ptr = orig_base_ptr.add(self.bytes_initialized_for_vector);
             let uninit_vector_len = orig_len.wrapping_sub(self.bytes_initialized_for_vector);
 
-            let uninit_vector = core::slice::from_raw_parts_mut(uninit_vector_base_ptr, uninit_vector_len);
+            let uninit_vector =
+                core::slice::from_raw_parts_mut(uninit_vector_base_ptr, uninit_vector_len);
 
             (init_vector, uninit_vector)
         })
     }
 
     fn debug_assert_validity(&self) {
-        debug_assert!(self.current_vector_all().map_or(true, |current_vector| current_vector.len() >= self.bytes_initialized_for_vector));
+        debug_assert!(self
+            .current_vector_all()
+            .map_or(true, |current_vector| current_vector.len()
+                >= self.bytes_initialized_for_vector));
         debug_assert!(self.bytes_initialized_for_vector <= isize::MAX as usize);
         debug_assert!(self.inner.as_maybe_uninit_vectors().len() >= self.vectors_initialized);
     }
@@ -469,7 +481,8 @@ where
     /// initializing.
     #[inline]
     pub fn vectors_remaining(&self) -> usize {
-        self.total_vector_count().wrapping_sub(self.vectors_initialized())
+        self.total_vector_count()
+            .wrapping_sub(self.vectors_initialized())
     }
 
     /// Counts the bytes that must be filled before the whole buffer is initialized.
@@ -478,12 +491,60 @@ where
     /// number of vectors that have not yet been initialized. If all vectors are already filled,
     /// then this completes in constant time.
     pub fn count_bytes_to_initialize(&self) -> usize {
-        let bytes_to_initialize_for_remaining = self.all_uninit_vectors().iter().skip(self.vectors_initialized + 1_usize).map(|buffer| buffer.as_maybe_uninit_slice().len()).sum::<usize>();
+        let bytes_to_initialize_for_remaining = self
+            .all_uninit_vectors()
+            .iter()
+            .skip(self.vectors_initialized + 1_usize)
+            .map(|buffer| buffer.as_maybe_uninit_slice().len())
+            .sum::<usize>();
 
         self.bytes_initialized_for_vector + bytes_to_initialize_for_remaining
     }
     pub fn count_total_bytes_in_all_vectors(&self) -> usize {
-        self.all_uninit_vectors().iter().map(|buffer| buffer.as_maybe_uninit_slice().len()).sum()
+        self.all_uninit_vectors()
+            .iter()
+            .map(|buffer| buffer.as_maybe_uninit_slice().len())
+            .sum()
+    }
+
+    /// Get the number of bytes that have been initialized for the vector at the given index.
+    ///
+    /// For vectors that has not yet been advanced to, this will zero, while vectors that are
+    /// already initialized will return the full length of that vector. The currently initializing
+    /// vector will return the partial length of the bytes within that vector that have been
+    /// initialized.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that vector_index is within the bounds of the slice of vectors given
+    /// by the inner wrapped value.
+    #[inline]
+    pub unsafe fn bytes_initialized_for_vector_unchecked(&self, vector_index: usize) -> usize {
+        let ordering = vector_index.cmp(&self.vectors_initialized);
+
+        match ordering {
+            core::cmp::Ordering::Equal => self.bytes_initialized_for_vector,
+            core::cmp::Ordering::Greater => 0,
+            core::cmp::Ordering::Less => self
+                .all_uninit_vectors()
+                .get_unchecked(vector_index)
+                .as_maybe_uninit_slice()
+                .len(),
+        }
+    }
+    #[inline]
+    pub fn bytes_initialized_for_vector(&self, vector_index: usize) -> usize {
+        assert!(vector_index < self.total_vector_count());
+
+        unsafe { self.bytes_initialized_for_vector_unchecked(vector_index) }
+    }
+    #[inline]
+    pub fn bytes_initialized_for_current_vector(&self) -> usize {
+        if self.vectors_initialized() != self.total_vector_count() {
+            self.bytes_initialized_for_vector
+        } else {
+            0
+        }
     }
 
     #[inline]
@@ -516,7 +577,8 @@ where
                 None => break,
             };
             if count >= current_uninit_part_len {
-                self.vectors_initialized = self.vectors_initialized
+                self.vectors_initialized = self
+                    .vectors_initialized
                     .checked_add(1)
                     .expect("reached usize::MAX when incrementing the buffer index");
                 self.bytes_initialized_for_vector = 0;

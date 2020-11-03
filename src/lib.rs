@@ -23,55 +23,53 @@
 //!
 //! use std::mem::MaybeUninit;
 //!
-//! use ioslice::{Initialization, Initialized, IoSliceMut, InitializePartialExt};
+//! use ioslice::buffer::{Buffer, BufferRef};
+//! use ioslice::Initialize;
 //! # // TODO: Add more safe abstractions for slices of I/O slices.
 //!
 //! pub trait MyRead {
-//!     // NOTE: This could be a regular slice as well.
-//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) ->
-//!     io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)>;
+//!     // NOTE: The function does not return any count, since the buffer keeps track of that.
+//!     //
+//!     // Rather than using `&mut Buffer<T>` directly, we use `BufferRef<'_, T>` to prevent the
+//!     // caller from replacing the buffer that is being filled with something different. It also
+//!     // gives the `Read` implementor a reduced subset of the functionality, to that it cannot
+//!     // for example read the bytes that are already written into the buffer.
+//!     fn read<'buffer, T: Initialize>(&mut self, buffer: BufferRef<'buffer, T>) -> io::Result<()>;
 //! }
 //!
 //! impl MyRead for &[u8] {
-//!     fn read<'a, I: Initialization>(&mut self, slice: IoSliceMut<'a, I>) ->
-//!     io::Result<(IoSliceMut<'a, Initialized>, IoSliceMut<'a, I>)> {
-//!         // Begin with taking the minimum slice that can fit the copy into the buffer.
-//!         let bytes_to_copy = std::cmp::min(self.len(), slice.len());
-//!         let (source, source_remainder) = self.split_at(bytes_to_copy);
+//!     fn read<'buffer, T>(&mut self, mut buffer: BufferRef<'buffer, T>) -> io::Result<()>
+//!     where
+//!         T: Initialize,
+//!     {
+//!         // Get the minimum number of bytes to copy. Note that it will panic if the source slice
+//!         // were to overflow, as with the regular `copy_from_slice` function for regular slices.
+//!         let min = std::cmp::min(self.len(), buffer.remaining());
 //!
-//!         // Split the possibly uninitialized slice into an initialized and an uninitialized
-//!         // part. This allows the `Read` implementation to only read part of the data requested.
-//!         //
-//!         // Normally this would be done via returning `usize`, but we need to be able to prove
-//!         // that we have initialized it.
-//!         let (initialized, remainder) = slice.partially_init_by_copying(source);
+//!         // Advance the buffer by simply copying the source slice.
+//!         buffer.append(&self[..min]);
 //!
-//!         // Advance the slice that is being read.
-//!         let bytes_copied = initialized.len();
-//!         *self = source_remainder;
-//!
-//!         // And finally, return the initialized part and the remainder to prove that we have
-//!         // initialized it. (And to make it possible for safe code to use the buffer directly.)
-//!         Ok((initialized, remainder))
+//!         Ok(())
 //!     }
 //! }
 //!
 //! # fn main() -> io::Result<()> {
 //!
-//! let mut buf = [MaybeUninit::uninit(); 32];
-//! let buf = IoSliceMut::from_uninit(&mut buf);
-//! let len = buf.len();
+//! // NOTE: The `Initialize` trait is only implemented for array sizes ranging from 0 to
+//! // (including) 32, unless the `nightly` feature is enabled, which uses `min_const_generics`.
+//! let array = [MaybeUninit::uninit(); 32];
+//! let len = array.len();
+//! let mut buf = Buffer::uninit(array);
 //!
 //! let original_stupid_text: &[u8] = b"copying is expensive!";
 //! let mut stupid_text = original_stupid_text;
 //!
 //! // Read as many bytes as possible.
-//! let (initialized, remainder) = stupid_text.read(buf)?;
-//! assert_eq!(initialized, original_stupid_text);
+//! stupid_text.read(buf.by_ref())?;
 //!
-//! // Note that while we cannot read the rest of the buffer, we can still use it as the
-//! // destination of even more I/O, or simply check its length here.
-//! assert_eq!(remainder.len(), len - original_stupid_text.len());
+//! // Note that while we cannot do anything useful with the rest of the buffer, we can still use
+//! // it as the destination of even more I/O, or simply check its length like we do here.
+//! assert_eq!(buf.remaining(), len - original_stupid_text.len());
 //!
 //! # Ok(())
 //!
@@ -1540,6 +1538,116 @@ impl<'a, I: Initialization, const N: usize> From<&'a mut [I::DerefTargetItem; N]
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 
+#[cfg(feature = "nightly")]
+unsafe impl<const N: usize> Initialize for [u8; N] {
+    type Initialized = [u8; N];
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        cast_init_to_uninit_slice(&*self)
+    }
+    #[inline]
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        cast_init_to_uninit_slice_mut(&mut *self)
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> [u8; N] {
+        self
+    }
+}
+#[cfg(feature = "nightly")]
+unsafe impl<const N: usize> Initialize for [MaybeUninit<u8>; N] {
+    type Initialized = [u8; N];
+
+    #[inline]
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+        self
+    }
+    #[inline]
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self
+    }
+
+    #[inline]
+    unsafe fn assume_init(self) -> [u8; N] {
+        // SAFETY: This is safe, since [u8; N] and [MaybeUninit<u8>; N] are guaranteed to have the
+        // exact same layouts, making them interchangable except for the initialization invariant,
+        // which the caller must uphold.
+
+        // XXX: This should ideally work. See issue https://github.com/rust-lang/rust/issues/61956
+        // for more information.
+        //
+        // core::mem::transmute::<[MaybeUninit<u8>; N], [u8; N]>(self)
+        //
+        // ... but, we'll have to rely on transmute_copy, which is more dangerous and requires the
+        // original type to be dropped. We have no choice. Hopefully the optimizer will understand
+        // this as well as it understands the regular transmute.
+        //
+        // XXX: Another solution would be to introduce assume_init for const-generic arrays.
+        let init = core::mem::transmute_copy(&self);
+        core::mem::forget(self);
+        init
+    }
+}
+
+#[cfg(not(feature = "nightly"))]
+mod for_arrays {
+    use super::*;
+
+    macro_rules! impl_initialize_for_size(
+        ($size:literal) => {
+            unsafe impl Initialize for [u8; $size] {
+                type Initialized = [u8; $size];
+
+                #[inline]
+                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+                    cast_init_to_uninit_slice(&*self)
+                }
+                #[inline]
+                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+                    cast_init_to_uninit_slice_mut(&mut *self)
+                }
+
+                #[inline]
+                unsafe fn assume_init(self) -> [u8; $size] {
+                    self
+                }
+            }
+            unsafe impl Initialize for [MaybeUninit<u8>; $size] {
+                type Initialized = [u8; $size];
+
+                #[inline]
+                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
+                    &*self
+                }
+                #[inline]
+                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+                    &mut *self
+                }
+
+                #[inline]
+                unsafe fn assume_init(self) -> [u8; $size] {
+                    // SAFETY: Refer to assume_init for the const generics-based version of this
+                    // impl..
+                    core::mem::transmute(self)
+                }
+            }
+        }
+    );
+    macro_rules! impl_initialize_for_sizes(
+        [$($size:literal),*] => {
+            $(
+                impl_initialize_for_size!($size);
+            )*
+        }
+    );
+    impl_initialize_for_sizes![
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31, 32
+    ];
+}
+
 #[cfg(feature = "alloc")]
 mod io_box {
     use super::*;
@@ -2497,7 +2605,7 @@ pub trait InitializeVectoredExt: InitializeVectored + private4::Sealed {
                 #[cfg(feature = "nightly")]
                 {
                     maybe_uninit_vector
-                        .as_maybe_uninit_vectors_mut()
+                        .as_maybe_uninit_slice_mut()
                         .fill(MaybeUninit::new(byte));
                 }
                 #[cfg(not(feature = "nightly"))]

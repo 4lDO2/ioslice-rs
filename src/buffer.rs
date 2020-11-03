@@ -468,6 +468,10 @@ where
     pub fn fill_by_zeroing(&mut self) {
         self.inner.fill_by_zeroing()
     }
+    #[inline]
+    pub fn append(&mut self, slice: &[u8]) {
+        self.inner.append(slice)
+    }
 }
 
 #[cfg(test)]
@@ -476,7 +480,7 @@ mod tests {
 
     #[test]
     fn basic_buffer_ops() {
-        let mut buffer = Buffer::uninit(vec! [MaybeUninit::<u8>::uninit(); 32]);
+        let mut buffer = Buffer::uninit([MaybeUninit::<u8>::uninit(); 32]);
         assert_eq!(buffer.capacity(), 32);
         assert_eq!(buffer.remaining(), 32);
         assert!(buffer.is_empty());

@@ -331,15 +331,13 @@ where
             Some(VectorParts {
                 filled,
                 unfilled_init,
-                unfilled_uninit
+                unfilled_uninit,
             })
         }
     }
     /// For the current vector, return the unfilled and initialized part, the unfilled but
     /// initialized part, and the unfilled and uninitialized part mutably, in that order.
-    pub fn current_vector_parts_mut(
-        &mut self,
-    ) -> Option<VectorPartsMut<'_>> {
+    pub fn current_vector_parts_mut(&mut self) -> Option<VectorPartsMut<'_>> {
         self.debug_assert_validity();
 
         unsafe {
@@ -417,12 +415,10 @@ pub struct VectorParts<'a> {
     pub filled: &'a [u8],
     pub unfilled_init: &'a [u8],
     pub unfilled_uninit: &'a [MaybeUninit<u8>],
-
 }
 #[derive(Debug, Default)]
 pub struct VectorPartsMut<'a> {
     pub filled: &'a mut [u8],
     pub unfilled_init: &'a mut [u8],
     pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
-
 }

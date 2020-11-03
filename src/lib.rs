@@ -2380,7 +2380,8 @@ pub unsafe trait InitializeVectored: Sized {
 
     // TODO: Should we require InitVector to have the exact same layout as UninitVector as an
     // unsafe contract when implementing this trait, or should we allow assume_init_all to be
-    // non-zero-cost (because it would have to reallocate in the generic case).
+    // non-zero-cost (because it would have to reallocate in the generic case, because &[&[T]] is
+    // not guaranteed to match the layout of &[&[MaybeUninit<T>]])?
     type InitVector: AsRef<[u8]> + AsMut<[u8]>;
 
     /// The possibly uninitialized vector type, which must implement [`Initialize`], with

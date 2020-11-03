@@ -382,57 +382,68 @@ where
 
     #[inline]
     pub fn current_vector_init_part(&self) -> Option<&[u8]> {
-        let vector = self.current_vector_all()?;
+        let (init_part, _) = self.current_vector_init_uninit_parts()?;
 
-        Some(unsafe {
-            let vector_base_ptr = vector.as_ptr() as *const u8;
-            let vector_len = self.bytes_initialized_for_vector;
-
-            core::slice::from_raw_parts(vector_base_ptr, vector_len)
-        })
+        Some(init_part)
     }
 
     #[inline]
     pub fn current_vector_uninit_part(&self) -> Option<&[MaybeUninit<u8>]> {
+        let (_, uninit_part) = self.current_vector_init_uninit_parts()?;
+
+        Some(uninit_part)
+    }
+    #[inline]
+    pub fn current_vector_init_uninit_parts(&self) -> Option<(&[u8], &[MaybeUninit<u8>])> {
         let vector = self.current_vector_all()?;
 
         Some(unsafe {
-            let vector_base_ptr = vector.as_ptr().add(self.bytes_initialized_for_vector);
-            let vector_len = vector.len().wrapping_sub(self.bytes_initialized_for_vector);
+            let init_vector_base_ptr = vector.as_ptr() as *const u8;
+            let init_vector_len = self.bytes_initialized_for_vector;
 
-            core::slice::from_raw_parts(vector_base_ptr, vector_len)
+            let init_vector = core::slice::from_raw_parts(init_vector_base_ptr, init_vector_len);
+
+            let uninit_vector_base_ptr = vector.as_ptr().add(self.bytes_initialized_for_vector);
+            let uninit_vector_len = vector.len().wrapping_sub(self.bytes_initialized_for_vector);
+
+            let uninit_vector = core::slice::from_raw_parts(uninit_vector_base_ptr, uninit_vector_len);
+
+            (init_vector, uninit_vector)
         })
     }
 
     #[inline]
     pub fn current_vector_init_part_mut(&mut self) -> Option<&mut [u8]> {
-        let (orig_base_ptr, orig_len) = unsafe {
-            let vector = self.current_vector_all_mut()?;
+        let (init_part_mut, _) = self.current_vector_init_uninit_parts_mut()?;
 
-            (vector.as_mut_ptr(), vector.len())
-        };
-
-        Some(unsafe {
-            let vector_base_ptr = orig_base_ptr as *mut u8;
-            let vector_len = self.bytes_initialized_for_vector;
-
-            core::slice::from_raw_parts_mut(vector_base_ptr, vector_len)
-        })
+        Some(init_part_mut)
     }
 
     #[inline]
     pub fn current_vector_uninit_part_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
+        let (_, uninit_part_mut) = self.current_vector_init_uninit_parts_mut()?;
+
+        Some(uninit_part_mut)
+    }
+    #[inline]
+    pub fn current_vector_init_uninit_parts_mut(&mut self) -> Option<(&mut [u8], &mut [MaybeUninit<u8>])> {
         let (orig_base_ptr, orig_len) = unsafe {
             let vector = self.current_vector_all_mut()?;
 
             (vector.as_mut_ptr(), vector.len())
         };
-
         Some(unsafe {
-            let vector_base_ptr = orig_base_ptr.add(self.bytes_initialized_for_vector);
-            let vector_len = orig_len.wrapping_sub(self.bytes_initialized_for_vector);
+            let init_vector_base_ptr = orig_base_ptr as *mut u8;
+            let init_vector_len = self.bytes_initialized_for_vector;
 
-            core::slice::from_raw_parts_mut(vector_base_ptr, vector_len)
+            let init_vector = core::slice::from_raw_parts_mut(init_vector_base_ptr, init_vector_len);
+
+            let uninit_vector_base_ptr = orig_base_ptr.add(self.bytes_initialized_for_vector);
+            let uninit_vector_len = orig_len.wrapping_sub(self.bytes_initialized_for_vector);
+
+            let uninit_vector = core::slice::from_raw_parts_mut(uninit_vector_base_ptr, uninit_vector_len);
+
+            (init_vector, uninit_vector)
         })
     }
 

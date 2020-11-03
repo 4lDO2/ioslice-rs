@@ -13,7 +13,7 @@ script:
   - cargo build --verbose --workspace
   - cargo test --verbose --workspace
   - cargo test --verbose --workspace --no-default-features
-  - which cargo-fmt && cargo fmt --all -- --check
-  - which cargo-clippy && cargo clippy --workspace -- -D warnings
+  - which cargo-fmt || cargo fmt --all -- --check
+  - which cargo-clippy || cargo clippy --workspace -- -D warnings
 jobs:
   fast_finish: true

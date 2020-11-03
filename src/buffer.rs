@@ -55,6 +55,10 @@ impl<T> Buffer<T> {
 
         (initializer, bytes_filled)
     }
+    #[inline]
+    pub fn into_initializer(self) -> BufferInitializer<T> {
+        self.initializer
+    }
     /// Move out the inner buffer, being uninitialized or initialized based on whatever it was when
     /// this buffer was constructed.
     ///
@@ -63,7 +67,7 @@ impl<T> Buffer<T> {
     /// [`try_into_init`]: #method.try_into_init
     #[inline]
     pub fn into_inner(self) -> T {
-        self.initializer.into_inner()
+        self.into_initializer().into_inner()
     }
 
     /// Get the number of bytes that are currently filled, within the buffer. Note that this is
@@ -350,9 +354,17 @@ where
                 .bytes_initialized()
                 .wrapping_sub(self.bytes_filled)
                 >= count,
-            "advancing filledness cursor beyond the initialized region"
+            "advancing filledness cursor beyond the initialized region ({} + {} = {} filled > {} init)",
+            self.bytes_filled,
+            count,
+            self.bytes_filled + count,
+            self.initializer.bytes_initialized,
         );
         self.bytes_filled = self.bytes_filled.wrapping_add(count);
+    }
+    #[inline]
+    pub fn advance_to_init_part(&mut self) {
+        self.bytes_filled = self.initializer.bytes_initialized;
     }
     // TODO: Method for increasing the bytes filled, but not the bytes initialized?
     /// Increment the counter that marks the progress of filling, as well as the initialization
@@ -505,6 +517,16 @@ mod tests {
         assert_eq!(unsafe { buffer.unfilled_part_mut().len() }, 32);
         // TODO: more
 
+        let (filled, unfilled_init, unfilled_uninit) = buffer.all_parts();
+        assert_eq!(filled, &[]);
+        assert_eq!(unfilled_init, &[]);
+        assert_eq!(unfilled_uninit.len(), 32);
+
+        let (filled, unfilled_init, unfilled_uninit) = buffer.all_parts_mut();
+        assert_eq!(filled, &mut []);
+        assert_eq!(unfilled_init, &mut []);
+        assert_eq!(unfilled_uninit.len(), 32);
+
         let src = b"I am a really nice slice!";
         let modified = b"I am a really wise slice!";
 
@@ -538,8 +560,40 @@ mod tests {
         assert_eq!(buffer.unfilled_part().len(), 32 - src.len());
         assert_eq!(unsafe { buffer.unfilled_part_mut().len() }, 32 - src.len());
 
-        // TODO: Refill the buffer but keep the initializer. Then make sure that the unfilled init
-        // and unfilled uninit parts are correctly implemented.
+        let mut initializer = buffer.into_initializer();
+
+        assert_eq!(initializer.bytes_initialized(), modified.len());
+        assert_eq!(initializer.remaining(), 7);
+        initializer.partially_fill_uninit_part(3_usize, 0xFF_u8);
+        initializer.partially_zero_uninit_part(1_usize);
+        assert_eq!(initializer.remaining(), 3);
+
+        let modified_and_garbage_bytes = b"I am a really wise slice!\xFF\xFF\xFF\x00";
+        let (init, uninit) = initializer.init_uninit_parts();
+        assert_eq!(init, modified_and_garbage_bytes);
+        assert_eq!(uninit.len(), 3);
+
+        let (init, uninit) = initializer.init_uninit_parts_mut();
+        assert_eq!(init, modified_and_garbage_bytes);
+        init[2] = b'e';
+        assert_eq!(uninit.len(), 3);
+
+        let mut buffer = Buffer::from_initializer(initializer);
+        buffer.advance(modified.len());
+
+        let (filled, unfilled_init, unfilled_uninit) = buffer.all_parts();
+        let modified_again = b"I em a really wise slice!";
+        assert_eq!(filled, modified_again);
+        assert_eq!(unfilled_init, b"\xFF\xFF\xFF\x00");
+        assert_eq!(unfilled_uninit.len(), 3);
+
+        let (filled, unfilled_init, unfilled_uninit) = buffer.all_parts_mut();
+        assert_eq!(filled, modified_again);
+        assert_eq!(unfilled_init, b"\xFF\xFF\xFF\x00");
+        unfilled_init[2] = b'\x13';
+        unfilled_init[3] = b'\x37';
+        assert_eq!(unfilled_init, b"\xFF\xFF\x13\x37");
+        assert_eq!(unfilled_uninit.len(), 3);
 
         let rest = b" Right?";
         buffer.append(rest);
@@ -549,12 +603,18 @@ mod tests {
         assert!(buffer.is_full());
         assert_eq!(buffer.remaining(), 0);
 
-        let total = b"I am a really wise slice! Right?";
+        let total = b"I em a really wise slice! Right?";
         assert_eq!(buffer.filled_part(), total);
         assert_eq!(buffer.filled_part_mut(), total);
         assert_eq!(buffer.initializer().remaining(), 0);
         assert_eq!(buffer.initializer().bytes_initialized(), 32);
         assert!(buffer.initializer().is_completely_init());
         assert!(!buffer.initializer().is_completely_uninit());
+
+        buffer.advance_to_init_part();
+
+        // TODO: Shorthand?
+        let initialized: [u8; 32] = buffer.into_initializer().try_into_init().unwrap();
+        assert_eq!(&initialized, total);
     }
 }

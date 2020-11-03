@@ -6,6 +6,8 @@ use crate::Initialize;
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
 /// data can always be moved out as uninitialized, but when the buffer _has_ been fully
 /// initialized, the buffer can be turned into the initialized equivalent.
+// TODO: Is #[derive(Debug)] sound here?
+#[derive(Debug)]
 pub struct BufferInitializer<T> {
     // This is the Buffer type, that wraps a _single_ buffer that is not guaranteed to be fully
     // initialized when wrapped.
@@ -284,8 +286,21 @@ where
     /// [`assume_init`]: #method.assume_init
     /// [`try_into_init`]: #method.try_into_init
     #[inline]
-    pub fn fill_uninit_part(&mut self, byte: u8) -> &mut [u8] {
-        crate::fill_uninit_slice(self.uninit_part_mut(), byte)
+    pub fn fill_uninit_part(&mut self, byte: u8) {
+        crate::fill_uninit_slice(self.uninit_part_mut(), byte);
+        unsafe { self.advance_to_end(); }
+    }
+    #[inline]
+    pub fn partially_fill_uninit_part(&mut self, count: usize, byte: u8) {
+        crate::fill_uninit_slice(&mut self.uninit_part_mut()[..count], byte);
+        // SAFETY: The slice indexing will already bounds check.
+        unsafe { self.advance(count) }
+    }
+    #[inline]
+    pub fn partially_zero_uninit_part(&mut self, count: usize) {
+        crate::fill_uninit_slice(&mut self.uninit_part_mut()[..count], 0_u8);
+        // SAFETY: The slice indexing will already bounds check.
+        unsafe { self.advance(count) }
     }
     /// Zero the uninitialized part.
     ///
@@ -295,8 +310,9 @@ where
     /// [`assume_init`]: #method.assume_init
     /// [`try_into_init`]: #method.try_into_init
     #[inline]
-    pub fn uninit_part_zeroed(&mut self) -> &mut [u8] {
-        self.fill_uninit_part(0_u8)
+    pub fn zero_uninit_part(&mut self) {
+        self.fill_uninit_part(0_u8);
+        unsafe { self.advance_to_end() }
     }
     /// Get both the initialized and uninitialized parts simultaneously. This method is nothing but
     /// a shorthand for the individual methods, but included for completeness.

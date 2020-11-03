@@ -67,7 +67,7 @@ where
                 core::slice::from_raw_parts(src.as_ptr(), self.vectors_filled())
             };
 
-            crate::Init::from_slices(filled)
+            crate::Init::cast_from_slices(filled)
         }
     }
     #[inline]
@@ -77,7 +77,7 @@ where
         unsafe {
             let ptr = { self.initializer_mut().all_uninit_vectors_mut().as_mut_ptr() };
             let filled = core::slice::from_raw_parts_mut(ptr, self.vectors_filled());
-            crate::Init::from_slices_mut(filled)
+            crate::Init::cast_from_slices_mut(filled)
         }
     }
     #[inline]
@@ -92,6 +92,12 @@ where
             Some(unsafe { all_vectors.get_unchecked(self.vectors_filled) }.as_maybe_uninit_slice())
         }
     }
+    /// Get the entire current vector as a mutable possibly-uninitialized slice, or None if all
+    /// vectors are already filled.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not allow the returned slice to be de-initialized in safe code.
     #[inline]
     pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
@@ -195,6 +201,13 @@ where
             core::slice::from_raw_parts(ptr, len)
         })
     }
+    /// Retrieve all of the unfilled part as a single possibly-uninitialized mutable reference.
+    // TODO: explain better
+    /// # Safety
+    ///
+    /// Since the returned slice could contain both the unfilled but initialized, and the unfilled
+    /// and uninitialized, this allows it to overlap. Thus, the caller must not de-initialize the
+    /// resulting slice in any way, in safe code.
     #[inline]
     pub unsafe fn current_vector_unfilled_all_part_mut(
         &mut self,
@@ -281,7 +294,12 @@ where
     }
     /// For the current vector, return the unfilled and initialized part, the unfilled but
     /// initialized part, and the unfilled and uninitialized part, in that order.
-    pub fn current_vector_parts(&self) -> Option<(&[u8], &[u8], &[MaybeUninit<u8>])> {
+    ///
+    /// Note that unlike [`current_vector_all_mut`], the exclusive aliasing rules that come with
+    /// mutable references are not needed here. The same result as calling this can be achieved by
+    /// calling the finer-grained methods that access the individual parts of the current vector.
+    // FIXME: which ones?
+    pub fn current_vector_parts(&self) -> Option<VectorParts<'_>> {
         self.debug_assert_validity();
 
         unsafe {
@@ -310,14 +328,18 @@ where
             let unfilled_uninit =
                 core::slice::from_raw_parts(unfilled_uninit_base_ptr, unfilled_uninit_len);
 
-            Some((filled, unfilled_init, unfilled_uninit))
+            Some(VectorParts {
+                filled,
+                unfilled_init,
+                unfilled_uninit
+            })
         }
     }
     /// For the current vector, return the unfilled and initialized part, the unfilled but
     /// initialized part, and the unfilled and uninitialized part mutably, in that order.
     pub fn current_vector_parts_mut(
         &mut self,
-    ) -> Option<(&mut [u8], &mut [u8], &mut [MaybeUninit<u8>])> {
+    ) -> Option<VectorPartsMut<'_>> {
         self.debug_assert_validity();
 
         unsafe {
@@ -346,7 +368,11 @@ where
             let unfilled_uninit =
                 core::slice::from_raw_parts_mut(unfilled_uninit_base_ptr, unfilled_uninit_len);
 
-            Some((filled, unfilled_init, unfilled_uninit))
+            Some(VectorPartsMut {
+                filled,
+                unfilled_init,
+                unfilled_uninit,
+            })
         }
     }
     fn debug_assert_validity(&self) {
@@ -385,4 +411,18 @@ where
             current_vector.len() - self.bytes_filled_for_vector
         })
     }
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VectorParts<'a> {
+    pub filled: &'a [u8],
+    pub unfilled_init: &'a [u8],
+    pub unfilled_uninit: &'a [MaybeUninit<u8>],
+
+}
+#[derive(Debug, Default)]
+pub struct VectorPartsMut<'a> {
+    pub filled: &'a mut [u8],
+    pub unfilled_init: &'a mut [u8],
+    pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
+
 }

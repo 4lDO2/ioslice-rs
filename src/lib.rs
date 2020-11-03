@@ -905,6 +905,10 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
         unsafe { cast_slice_same_layout(selves) }
     }
     /// Cast any mutable slice of I/O slice into its uninitialized counterpart.
+    ///
+    /// # Safety
+    ///
+    /// The returned slice must not be used to de-initialize any data.
     #[inline]
     pub unsafe fn cast_to_uninit_slices_mut(
         selves: &mut [Self],
@@ -913,11 +917,19 @@ impl<'a, I: Initialization> IoSliceMut<'a, I> {
     }
 
     /// Cast any slice of I/O slice into its uninitialized counterpart.
+    ///
+    /// # Safety
+    ///
+    /// The initialization invariant must be upheld.
     #[inline]
     pub unsafe fn cast_to_init_slices(selves: &[Self]) -> &[IoSliceMut<'a, Initialized>] {
         cast_slice_same_layout(selves)
     }
     /// Cast any mutable slice of I/O slice into its uninitialized counterpart.
+    ///
+    /// # Safety
+    ///
+    /// The initialization invariant must be upheld.
     #[inline]
     pub unsafe fn cast_to_init_slices_mut(
         selves: &mut [Self],
@@ -2358,6 +2370,10 @@ pub unsafe trait Initialize: Sized {
     /// point to the same slice as with previous invocations__, and it must be safe to call
     /// [`assume_init`] when all bytes here are overwritten.
     ///
+    /// # Safety
+    ///
+    /// The caller must not use the resulting slice to de-initialize the data.
+    ///
     /// [`assume_init`]: #tymethod.assume_init
     unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
 
@@ -2375,6 +2391,14 @@ pub unsafe trait Initialize: Sized {
 }
 
 /// A trait for slices (or owned memory) that contain possibly uninitialized slices themselves.
+/// That is, the [`Initialize`] trait but for singly-indirect slices.
+///
+/// # Safety
+///
+/// For this trait to be implemented correctly, [`as_maybe_uninit_slice`] and
+/// [`as_maybe_uninit_slice_mut`] must always return the same slices (albeit with different
+/// aliasing rules as they take `&self` and `&mut self` respectively). Additionally, the
+/// [`assume_init_all`] method must assume initializedness of exactly these slices.
 // XXX: It would be __really__ useful to be able to unify the InitializeIndirectExt and
 // InitializeExt traits, since they provide an identical interface, but with different
 // requirements. This could perhaps be abstracted, but the best solution would be to use
@@ -2401,9 +2425,31 @@ pub unsafe trait InitializeVectored: Sized {
     /// into [`MaybeUninit<u8>`], but can be anything that is convertible to it.
     type UninitVector: Initialize<Initialized = Self::InitVector>;
 
+    /// Get the uninitialized version of all vectors. This slice must always be exactly equal to
+    /// the slice returned by [`as_maybe_uninit_slice_mut`], or the trait is unsoundly implemented.
     fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector];
+
+    /// Get the uninitialized version of all vectors, mutably. This slice must always be exactly
+    /// equal to the slice returned by [`as_maybe_uninit_slice`], or the trait is unsoundly
+    /// implemented.
+    ///
+    /// # Safety
+    ///
+    /// For the user of this trait, the resulting slice returned from this method _must not_ be
+    /// used to de-initialize the vectors by overwriting their contents with
+    /// [`MaybeUninit::uninit`] if they were already initialized.
     unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 
+    /// Assume that every vector has been fully initialized, consuming ownership of `self` and
+    /// returning the finalized value.
+    ///
+    /// # Safety
+    ///
+    /// The initialization invariant must be upheld for _every vector_ that is returned by
+    /// [`as_maybe_uninit_vectors`] and [`as_maybe_uninit_vectors_mut`].
+    ///
+    /// [`as_maybe_uninit_vectors`]: #tymethod.as_maybe_uninit_vectors
+    /// [`as_maybe_uninit_vectors_mut`]: #tymethod.as_maybe_uninit_vectors_mut
     unsafe fn assume_init_all(self) -> Self::InitVectors;
 }
 pub trait InitializeExt: private2::Sealed + Initialize {
@@ -2823,26 +2869,45 @@ pub struct Init<T> {
 }
 
 impl<T> Init<T> {
+    /// Wrap a possibly-uninitialized value `inner` into, assuming that it is fully initialized.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `inner` is fully initialized before this function can be
+    /// called.
     #[inline]
     pub const unsafe fn new(inner: T) -> Self {
         Self { inner }
     }
+    /// Cast `&[T]` to `&[Init<T>]`.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because the caller has to ensure that all instances of type `T`, uphold the
+    /// initialization invariant.
     #[inline]
-    pub unsafe fn from_slices(inner_slices: &[T]) -> &[Self] {
+    pub unsafe fn cast_from_slices(inner_slices: &[T]) -> &[Self] {
         // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
         // same layout. The only contract that the caller has to follow, is that the data must
         // actually be initialized.
         core::slice::from_raw_parts(inner_slices.as_ptr() as *const Self, inner_slices.len())
     }
+    /// Cast `&mut [T]` to `&mut [Init<T>]`.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because the caller has to ensure that all instances of type `T`, uphold the
+    /// initialization invariant.
     #[inline]
-    pub unsafe fn from_slices_mut(inner_slices: &mut [T]) -> &mut [Self] {
+    pub unsafe fn cast_from_slices_mut(inner_slices: &mut [T]) -> &mut [Self] {
         // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
         // same layout. The only contract that the caller has to follow, is that the data must
         // actually be initialized.
         core::slice::from_raw_parts_mut(inner_slices.as_ptr() as *mut Self, inner_slices.len())
     }
+    /// Cast `&[Init<T>]` to `&mut [Init<T>]`.
     #[inline]
-    pub fn as_uninit_slices(selves: &[Self]) -> &[T] {
+    pub fn cast_to_uninit_slices(selves: &[Self]) -> &[T] {
         unsafe {
             // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
             // same layout.
@@ -2851,8 +2916,15 @@ impl<T> Init<T> {
             core::slice::from_raw_parts(selves.as_ptr() as *const T, selves.len())
         }
     }
+    /// Cast `&mut [Init<T>]` to `&mut [T]`.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because it allows for de-initialization, which is very unlikely to happen by
+    /// accident in practice, but which still would be unsound. The caller must simply never
+    /// overwrite an already initialized value with [`MaybeUninit::uninit()`].
     #[inline]
-    pub unsafe fn as_uninit_slices_mut(selves: &mut [Self]) -> &mut [T] {
+    pub unsafe fn cast_to_uninit_slices_mut(selves: &mut [Self]) -> &mut [T] {
         // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
         // same layout. The only contract that the caller has to follow, is that the data must
         // never be de-initialized.
@@ -2907,6 +2979,14 @@ where
     pub fn get_uninit_ref(&self) -> &[MaybeUninit<u8>] {
         self.inner().as_maybe_uninit_slice()
     }
+    /// Get a mutable slice to the inner uninitialized slice.
+    ///
+    /// # Safety
+    ///
+    /// Since the [`Initialize`] trait is generic over both already initialized and uninitialized
+    /// types, it is unsafe to retrieve an uninitialized slice to already initialized data, because
+    /// it allows for de-initialization. (This can happen when overwriting the resulting slice with
+    /// [`MaybeUninit::uninit()`].
     #[inline]
     pub unsafe fn get_uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.inner_mut().as_maybe_uninit_slice_mut()

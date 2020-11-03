@@ -58,15 +58,36 @@ where
         debug_assert!(self.bytes_initialized <= self.capacity());
     }
 
+    /// Advance the initialization counter by `count` bytes.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the caller must be sure that another `count` bytes from the previous
+    /// initialization offset, are initialized.
+    ///
+    /// This method does not do any bounds checking. Ergo, `count` can never be larger than
+    /// the value returned by [`remaining`].
     #[inline]
     pub unsafe fn advance(&mut self, count: usize) {
-        self.bytes_initialized = self.bytes_initialized.wrapping_add(count);
+        self.bytes_initialized += count;
     }
+    /// Advance the initialization counter to the end.
+    ///
+    /// # Safety
+    ///
+    /// While this eliminates the need for the caller to bounds check manually, unlike with
+    /// [`advance`], the caller must uphold the initialization invariant.
     #[inline]
     pub unsafe fn advance_to_end(&mut self) {
         self.bytes_initialized = self.all_uninit().len();
     }
 
+    /// Assume that the inner value is fully initialized, finalizing the original type into its
+    /// initialized counterpart.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold the initialization invariant.
     #[inline]
     pub unsafe fn assume_init(self) -> T::Initialized {
         self.inner.assume_init()
@@ -357,7 +378,7 @@ where
     pub fn current_vector_all(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
-        if self.all_vectors_uninit().len() != 0 {
+        if !self.all_vectors_uninit().is_empty() {
             Some(unsafe {
                 self.all_vectors_uninit()
                     .get_unchecked(self.vectors_initialized)
@@ -368,11 +389,15 @@ where
         }
     }
     /// Retrieve the current buffer mutably, provided that there is one.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because the caller must not de-initialize the buffer.
     #[inline]
     pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
-        if self.all_vectors_uninit().len() != 0 {
+        if !self.all_vectors_uninit().is_empty() {
             let vectors_initialized = self.vectors_initialized;
 
             let all_vectors_uninit_mut = self.all_uninit_vectors_mut();
@@ -547,10 +572,16 @@ where
         }
     }
 
+    /// Get the uninitialized version of all vectors wrapped by this initializer.
     #[inline]
     pub fn all_uninit_vectors(&self) -> &[T::UninitVector] {
         self.inner.as_maybe_uninit_vectors()
     }
+    /// Get the uninitialized version of all vectors wrapped by this initializer, mutably.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not de-initialize any values.
     #[inline]
     pub unsafe fn all_uninit_vectors_mut(&mut self) -> &mut [T::UninitVector] {
         self.inner.as_maybe_uninit_vectors_mut()
@@ -571,11 +602,9 @@ where
     pub unsafe fn advance(&mut self, mut count: usize) -> usize {
         let mut bytes_advanced = 0;
 
-        loop {
-            let current_uninit_part_len = match self.current_vector_uninit_part() {
-                Some(slice) => slice.len(),
-                None => break,
-            };
+        while let Some(current_uninit_part) = self.current_vector_uninit_part() {
+            let current_uninit_part_len = current_uninit_part.len();
+
             if count >= current_uninit_part_len {
                 self.vectors_initialized = self
                     .vectors_initialized
@@ -594,7 +623,18 @@ where
 
         bytes_advanced
     }
+    /// Advance the initialization progress to the end of the current vector, thus wrapping and
+    /// continuing to the next
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe not only because of the initialization invariant, but also because it does
+    /// not check whether the _initialized vectors_ counter is at the end (meaning that all vectors
+    /// are initialized). The caller must hence ensure that the value of [`vectors_remaining`] is
+    /// larger than zero.
     pub unsafe fn advance_current_vector_to_end(&mut self) {
+        debug_assert!(self.vectors_initialized + 1 < self.total_vector_count());
+
         self.vectors_initialized += 1;
         self.bytes_initialized_for_vector = 0;
     }

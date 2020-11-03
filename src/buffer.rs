@@ -70,7 +70,7 @@ impl<T> Buffer<T> {
     }
 
     #[inline]
-    pub fn by_ref<'buffer>(&'buffer mut self) -> BufferRef<'buffer, T> {
+    pub fn by_ref(&mut self) -> BufferRef<'_, T> {
         BufferRef { inner: self }
     }
 
@@ -329,8 +329,8 @@ where
             let unfilled_part = self.unfilled_part_mut();
             assert!(slice.len() <= unfilled_part.len());
             unfilled_part[..slice.len()].copy_from_slice(crate::cast_init_to_uninit_slice(slice));
-            self.initializer_mut().advance(slice.len());
-            self.advance(slice.len());
+
+            self.assume_init(slice.len())
         }
     }
     #[inline]
@@ -344,13 +344,27 @@ where
         );
         self.bytes_filled = self.bytes_filled.wrapping_add(count);
     }
+    // TODO: Method for increasing the bytes filled, but not the bytes initialized?
+    /// Increment the counter that marks the progress of filling, as well as the initialization
+    /// progress, `count` bytes.
+    ///
+    /// # Safety
+    ///
+    /// This does not initialize nor fill anything, and it is hence up to the user to ensure that
+    /// no uninitialized bytes are marked initialized.
     pub unsafe fn assume_init(&mut self, count: usize) {
-        self.bytes_filled = self.bytes_filled.wrapping_add(count);
+        self.bytes_filled += count;
         self.initializer.bytes_initialized =
-            core::cmp::min(self.bytes_filled, self.initializer.bytes_initialized);
+            core::cmp::max(self.bytes_filled, self.initializer.bytes_initialized);
 
         self.debug_assert_validity();
     }
+    /// Mark the buffer as fully filled and initialized, without actually filling the buffer.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the caller must ensure that every single byte in the slice that the
+    /// buffer wraps, is initialized.
     pub unsafe fn assume_init_all(&mut self) {
         self.bytes_filled = self.capacity();
         self.initializer.bytes_initialized = self.capacity();
@@ -394,7 +408,7 @@ impl<'buffer, T> BufferRef<'buffer, T> {
 
     /// Reborrow the inner buffer, getting a buffer reference with a shorter lifetime.
     #[inline]
-    pub fn by_ref<'shorter>(&'shorter mut self) -> BufferRef<'shorter, T> {
+    pub fn by_ref(&mut self) -> BufferRef<'_, T> {
         BufferRef { inner: self.inner }
     }
 }
@@ -411,14 +425,33 @@ where
     pub fn unfilled_parts(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
         self.inner.unfilled_parts_mut()
     }
+    /// Get a mutable and possibly-uninitialized reference to all of the buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not allow safe code to de-initialize the resulting slice.
     #[inline]
     pub unsafe fn unfilled_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.inner.unfilled_part_mut()
     }
+    /// Advance the counter of the number of bytes filled.
+    ///
+    /// The number of bytes that are initialized is also updated accordingly, so that the number of
+    /// bytes initialized is always greater than or equal to the number of bytes filled.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold the initialization invariant.
     #[inline]
     pub unsafe fn advance(&mut self, count: usize) {
         self.inner.assume_init(count)
     }
+    /// Advance the counter of the number of bytes filled, and the number of bytes initialized, to
+    /// the end of the buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold the initialization invariant.
     #[inline]
     pub unsafe fn advance_all(&mut self) {
         self.inner.assume_init_all();

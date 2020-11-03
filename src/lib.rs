@@ -2507,6 +2507,10 @@ pub unsafe trait Initialize: Sized {
 /// [`as_maybe_uninit_slice_mut`] must always return the same slices (albeit with different
 /// aliasing rules as they take `&self` and `&mut self` respectively). Additionally, the
 /// [`assume_init_all`] method must assume initializedness of exactly these slices.
+///
+/// [`assume_init_all`]: #tymethod.assume_init_all
+/// [`as_maybe_uninit_slice`]: #tymethod.as_maybe_uninit_slice
+/// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
 // XXX: It would be __really__ useful to be able to unify the InitializeIndirectExt and
 // InitializeExt traits, since they provide an identical interface, but with different
 // requirements. This could perhaps be abstracted, but the best solution would be to use
@@ -2535,6 +2539,8 @@ pub unsafe trait InitializeVectored: Sized {
 
     /// Get the uninitialized version of all vectors. This slice must always be exactly equal to
     /// the slice returned by [`as_maybe_uninit_slice_mut`], or the trait is unsoundly implemented.
+    ///
+    /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
     fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector];
 
     /// Get the uninitialized version of all vectors, mutably. This slice must always be exactly
@@ -2546,6 +2552,8 @@ pub unsafe trait InitializeVectored: Sized {
     /// For the user of this trait, the resulting slice returned from this method _must not_ be
     /// used to de-initialize the vectors by overwriting their contents with
     /// [`MaybeUninit::uninit`] if they were already initialized.
+    ///
+    /// [`as_maybe_uninit_slice`]: #tymethod.as_maybe_uninit_slice
     unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 
     /// Assume that every vector has been fully initialized, consuming ownership of `self` and
@@ -2887,9 +2895,9 @@ pub unsafe fn cast_init_to_uninit_slice_mut(init: &mut [u8]) -> &mut [MaybeUnini
 /// For this to be safe, the initialization invariant must be upheld, exactly like when reading.
 ///
 /// __NOTE: This must not be used for initializing the buffer__. For that, there are are other safe
-/// methods like [`SliceMutExt::init_by_filling`] and [`SliceMutExt::init_by_copying`]. If unsafe
-/// code is still somehow, always initialize this by copying from _another_ MaybeUninit slice, or
-/// using [`std::ptr::copy`] or [`std::ptr::copy_nonoverlapping`].
+/// methods like [`InitializeExt::init_by_filling`] and [`InitializeExt::init_by_copying`]. If
+/// unsafe code is still somehow, always initialize this by copying from _another_ MaybeUninit
+/// slice, or using [`std::ptr::copy`] or [`std::ptr::copy_nonoverlapping`].
 #[inline]
 pub unsafe fn cast_uninit_to_init_slice_mut(uninit: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     cast_slice_same_layout_mut(uninit)

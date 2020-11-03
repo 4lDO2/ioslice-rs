@@ -67,6 +67,8 @@ where
     ///
     /// This method does not do any bounds checking. Ergo, `count` can never be larger than
     /// the value returned by [`remaining`].
+    ///
+    /// [`remaining`]: #method.remaining
     #[inline]
     pub unsafe fn advance(&mut self, count: usize) {
         self.bytes_initialized += count;
@@ -77,6 +79,8 @@ where
     ///
     /// While this eliminates the need for the caller to bounds check manually, unlike with
     /// [`advance`], the caller must uphold the initialization invariant.
+    ///
+    /// [`advance`]: #method.advance
     #[inline]
     pub unsafe fn advance_to_end(&mut self) {
         self.bytes_initialized = self.all_uninit().len();
@@ -276,6 +280,9 @@ where
     ///
     /// After this method has been called, it is safe to [`assume_init`]. [`try_into_init`] will
     /// then also succeed.
+    ///
+    /// [`assume_init`]: #method.assume_init
+    /// [`try_into_init`]: #method.try_into_init
     #[inline]
     pub fn fill_uninit_part(&mut self, byte: u8) -> &mut [u8] {
         crate::fill_uninit_slice(self.uninit_part_mut(), byte)
@@ -284,6 +291,9 @@ where
     ///
     /// After this method has been called, it is safe to [`assume_init`]. [`try_into_init`] will
     /// then also succeed.
+    ///
+    /// [`assume_init`]: #method.assume_init
+    /// [`try_into_init`]: #method.try_into_init
     #[inline]
     pub fn uninit_part_zeroed(&mut self) -> &mut [u8] {
         self.fill_uninit_part(0_u8)
@@ -293,6 +303,10 @@ where
     ///
     /// This is because the mutable counterpart [`init_uninit_parts_mut`] cannot be done separately
     /// by calling the [`init_part_mut`] and [`uninit_part_mut`] methods.
+    ///
+    /// [`init_part_mut`]: #method.init_part_mut
+    /// [`uninit_part_mut`]: #method.uninit_part_mut
+    /// [`init_uninit_parts_mut`]: #method.init_uninit_parts_mut
     #[inline]
     pub fn init_uninit_parts(&self) -> (&[u8], &[MaybeUninit<u8>]) {
         (self.init_part(), self.uninit_part())
@@ -632,6 +646,8 @@ where
     /// not check whether the _initialized vectors_ counter is at the end (meaning that all vectors
     /// are initialized). The caller must hence ensure that the value of [`vectors_remaining`] is
     /// larger than zero.
+    ///
+    /// [`vectors_remaining`]: #method.vectors_remaining
     pub unsafe fn advance_current_vector_to_end(&mut self) {
         debug_assert!(self.vectors_initialized + 1 < self.total_vector_count());
 

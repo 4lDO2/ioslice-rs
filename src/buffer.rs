@@ -39,6 +39,8 @@ impl<T> Buffer<T> {
     }
     /// Create a new buffer, defaulting to not being initialized, nor filled. Prefer [`new_init`]
     /// if the buffer is already initialized.
+    ///
+    /// [`new_init`]: #method.new_init
     pub const fn uninit(inner: T) -> Self {
         Self::from_initializer(BufferInitializer::uninit(inner))
     }
@@ -57,6 +59,8 @@ impl<T> Buffer<T> {
     /// this buffer was constructed.
     ///
     /// Use [`try_into_init`] if the buffer is initialized.
+    ///
+    /// [`try_into_init`]: #method.try_into_init
     #[inline]
     pub fn into_inner(self) -> T {
         self.initializer.into_inner()
@@ -64,6 +68,8 @@ impl<T> Buffer<T> {
 
     /// Get the number of bytes that are currently filled, within the buffer. Note that this is
     /// different from the number of initialized bytes; use [`bytes_initialized`] for that.
+    ///
+    /// [`bytes_initialized`]: #method.bytes_initialized
     #[inline]
     pub const fn bytes_filled(&self) -> usize {
         self.bytes_filled
@@ -168,12 +174,16 @@ where
     /// is unfilled, the caller must ensure that the resulting slice is never used to deinitialize
     /// the buffer.
     ///
-    /// It is thus recommended to use [`append`] or [`fill`] instead, since those are the by far
-    /// most common operations to do when initializing. However, code that requires interfacing
-    /// with other APIs such as system calls, need to use this function.
+    /// It is thus recommended to use [`append`] or [`fill_by_repeating`] instead, since those are
+    /// the by far most common operations to do when initializing. However, code that requires
+    /// interfacing with other APIs such as system calls, need to use this function.
     ///
     /// If mutable access really is needed for the unfilled region in safe code, consider using
     /// [`unfilled_init_uninit_parts_mut`].
+    ///
+    /// [`append`]: #method.append
+    /// [`fill_by_repeating`]: #method.fill_by_repeating
+    /// [`unfilled_init_uninit_parts_mut`]: #method.unfilled_init_uninit_parts_mut
     #[inline]
     pub unsafe fn unfilled_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         let (orig_ptr, orig_len) = {

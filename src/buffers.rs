@@ -298,6 +298,8 @@ where
     /// Note that unlike [`current_vector_all_mut`], the exclusive aliasing rules that come with
     /// mutable references are not needed here. The same result as calling this can be achieved by
     /// calling the finer-grained methods that access the individual parts of the current vector.
+    ///
+    /// [`current_vector_all_mut`]: #method.current_vector_all_mut
     // FIXME: which ones?
     pub fn current_vector_parts(&self) -> Option<VectorParts<'_>> {
         self.debug_assert_validity();

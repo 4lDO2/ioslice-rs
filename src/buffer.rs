@@ -6,6 +6,7 @@
 //! This is an implementation of an API similar to what has been proposed in [this
 //! RFC](https://github.com/sfackler/rfcs/blob/read-buf/text/0000-read-buf.md).
 
+use core::fmt;
 use core::mem::MaybeUninit;
 
 use crate::{Initialize, InitializeExt};
@@ -387,6 +388,7 @@ where
     ///
     /// For this to be safe, the caller must ensure that every single byte in the slice that the
     /// buffer wraps, is initialized.
+    #[inline]
     pub unsafe fn assume_init_all(&mut self) {
         self.bytes_filled = self.capacity();
         self.initializer.bytes_initialized = self.capacity();
@@ -493,6 +495,34 @@ where
     #[inline]
     pub fn append(&mut self, slice: &[u8]) {
         self.inner.append(slice)
+    }
+}
+
+impl<T> fmt::Debug for Buffer<T>
+where
+    T: Initialize,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ptr = self.initializer().all_uninit().as_ptr();
+        let bytes_init = self.initializer().bytes_initialized();
+        let bytes_filled = self.bytes_filled();
+        let total = self.capacity();
+
+        if f.alternate() {
+            let init_percentage = bytes_init as f64 / total as f64 * 100.0;
+            let filled_percentage = bytes_filled as f64 / total as f64 * 100.0;
+            write!(
+                f,
+                "[buffer at {:?}, {} B filled ({:.1}%), {} B init ({:.1}%), {} B total]",
+                ptr, bytes_filled, filled_percentage, bytes_init, init_percentage, total
+            )
+        } else {
+            write!(
+                f,
+                "[buffer at {:?}, {}/{}/{}]",
+                ptr, bytes_filled, bytes_init, total
+            )
+        }
     }
 }
 
@@ -616,5 +646,27 @@ mod tests {
         // TODO: Shorthand?
         let initialized: [u8; 32] = buffer.into_initializer().try_into_init().unwrap();
         assert_eq!(&initialized, total);
+    }
+    #[test]
+    fn debug_impl() {
+        let mut array = [MaybeUninit::<u8>::uninit(); 32];
+        let mut buffer = Buffer::uninit(array);
+        buffer.append(b"Hello, world!");
+        buffer.initializer_mut().partially_zero_uninit_part(13);
+
+        assert_eq!(
+            format!("{:?}", buffer),
+            format!(
+                "[buffer at {:p}, 13/26/32]",
+                buffer.initializer().all_uninit().as_ptr()
+            )
+        );
+        assert_eq!(
+            format!("{:#?}", buffer),
+            format!(
+                "[buffer at {:p}, 13 B filled (40.6%), 26 B init (81.2%), 32 B total]",
+                buffer.initializer().all_uninit().as_ptr()
+            )
+        );
     }
 }

@@ -288,7 +288,9 @@ where
     #[inline]
     pub fn fill_uninit_part(&mut self, byte: u8) {
         crate::fill_uninit_slice(self.uninit_part_mut(), byte);
-        unsafe { self.advance_to_end(); }
+        unsafe {
+            self.advance_to_end();
+        }
     }
     #[inline]
     pub fn partially_fill_uninit_part(&mut self, count: usize, byte: u8) {

@@ -2447,10 +2447,9 @@ mod tests {
 }
 
 // TODO: Unfortunately &[u8] does not currently implement AsRef<[MaybeUninit<u8>]>, but in the
-// future we might simply also require AsRef and AsMut.
-/// A trait for mutable slices (there is not much to do at all with an uninitialized immutable
-/// slice, is there?), that can be safely casted to an uninitialized slice, but also unsafely
-/// assumed to be initialized when they may not be.
+// future we might simply also require AsRef and AsMut, in addition to this unsafe contract.
+/// A trait for mutable initializable slices, that provide access to all the data required for
+/// initialization, before the data can be assumed to be fully initialized.
 ///
 /// # Safety
 ///
@@ -2461,18 +2460,13 @@ mod tests {
 ///
 /// In the future, when `&[u8]` starts implementing `AsRef<[MaybeUninit<u8>]>`, then this
 /// implementation must also ensure that the `AsRef` implementation is correct.
-// TODO: Generalize this to other slice types than [u8], which would be especially combined with
-// `zerocopy` struct-reinterpreting.
-pub unsafe trait Initialize: Sized {
-    /// The type that this turns into after initialization.
-    type Initialized: AsRef<[u8]> + AsMut<[u8]> + Sized;
-
+pub unsafe trait Initialize<T: Sized>: Sized {
     /// Retrieve an immutable slice pointing to possibly uninitialized memory. __This must be
     /// exactly the same slice as the one from [`as_maybe_uninit_slice_mut`], or the trait
     /// implementation as a whole, gets incorrect.__
     ///
     /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>];
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<T>];
 
     /// Retrieve a mutable slice pointing to possibly uninitialized memory. __This must always
     /// point to the same slice as with previous invocations__, and it must be safe to call
@@ -2483,19 +2477,7 @@ pub unsafe trait Initialize: Sized {
     /// The caller must not use the resulting slice to de-initialize the data.
     ///
     /// [`assume_init`]: #tymethod.assume_init
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
-
-    /// Unsafely assume that the value actually is initialized, getting a value of the initialized
-    /// type.
-    ///
-    /// # Safety
-    ///
-    /// The safety of calling this depends on the initialization invariant. Before this can ever be
-    /// called, the caller must ensure that every byte given in [`as_maybe_uninit_slice_mut`] has
-    /// been written to, or that it was already initialized.
-    ///
-    /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
-    unsafe fn assume_init(self) -> Self::Initialized;
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>];
 }
 
 /// A trait for slices (or owned memory) that contain possibly uninitialized slices themselves.

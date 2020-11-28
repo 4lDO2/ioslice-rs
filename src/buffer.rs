@@ -96,9 +96,9 @@ impl<T> Buffer<T> {
     }
 }
 
-impl<T> Buffer<T>
+impl<T, U> Buffer<T>
 where
-    T: Initialize,
+    T: Initialize<Item = U>,
 {
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -437,9 +437,9 @@ impl<'buffer, T> BufferRef<'buffer, T> {
     }
 }
 
-impl<'buffer, T> BufferRef<'buffer, T>
+impl<'buffer, T, U> BufferRef<'buffer, T>
 where
-    T: Initialize,
+    T: Initialize<Item = U>,
 {
     #[inline]
     pub fn remaining(&self) -> usize {
@@ -498,9 +498,9 @@ where
     }
 }
 
-impl<T> fmt::Debug for Buffer<T>
+impl<T, U> fmt::Debug for Buffer<T>
 where
-    T: Initialize,
+    T: Initialize<Item = U>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ptr = self.initializer().all_uninit().as_ptr();

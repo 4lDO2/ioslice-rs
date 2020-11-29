@@ -100,7 +100,7 @@ mod private {
     pub trait Sealed {}
 }
 
-pub unsafe trait Initialization: private::Sealed {
+pub unsafe trait Initialization: private::Sealed + Sized + 'static + Send + Sync + Unpin {
     const IS_INITIALIZED: bool;
     type DerefTargetItem: fmt::Debug;
 }

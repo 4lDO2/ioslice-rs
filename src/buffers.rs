@@ -425,6 +425,22 @@ pub struct VectorPartsMut<'a> {
     pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
 }
 
+pub struct BuffersRef<'buffer, T> {
+    inner: &'buffer mut Buffers<T>,
+}
+impl<T> Buffers<T> {
+    #[inline]
+    pub fn by_ref(&mut self) -> BuffersRef<'_, T> {
+        BuffersRef { inner: self }
+    }
+}
+impl<'buffer, T> BuffersRef<'buffer, T> {
+    #[inline]
+    pub fn by_ref(&mut self) -> BuffersRef<'_, T> {
+        BuffersRef { inner: self.inner }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1597,36 +1597,34 @@ mod for_arrays {
 
     macro_rules! impl_initialize_for_size(
         ($size:literal) => {
-            unsafe impl<U> Initialize for [U; $size] {
-                type Item = U;
-
+            unsafe impl Initialize for [u8; $size] {
                 #[inline]
-                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
                     cast_init_to_uninit_slice(&*self)
                 }
                 #[inline]
-                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
                     cast_init_to_uninit_slice_mut(&mut *self)
                 }
             }
-            unsafe impl<U> Initialize for [MaybeUninit<U>; $size] {
-                type Item = U;
-
+            unsafe impl Initialize for [MaybeUninit<u8>; $size] {
                 #[inline]
-                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+                fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
                     &*self
                 }
                 #[inline]
-                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+                unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
                     &mut *self
                 }
             }
             impl From<Init<[MaybeUninit<u8>; $size]>> for [u8; $size] {
                 #[inline]
                 fn from(init_array: Init<[MaybeUninit<u8>; $size]>) -> [u8; $size] {
-                    // SAFETY: Refer to assume_init for the const generics-based version of this
-                    // impl..
-                    core::mem::transmute(init_array)
+                    unsafe {
+                        // SAFETY: Refer to assume_init for the const generics-based version of this
+                        // impl..
+                        core::mem::transmute(init_array)
+                    }
                 }
             }
         }
@@ -2181,8 +2179,6 @@ mod io_box {
     // TODO: more impls
 
     unsafe impl<I: Initialization> Initialize for IoBox<I> {
-        type Item = u8;
-
         fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
             #[forbid(unconditional_recursion)]
             IoBox::as_maybe_uninit_slice(self)
@@ -2195,7 +2191,9 @@ mod io_box {
     impl<I: Initialization> From<Init<IoBox<I>>> for IoBox<Initialized> {
         #[inline]
         fn from(init_iobox: Init<IoBox<I>>) -> IoBox<Initialized> {
-            unsafe { IoBox::from_raw(init_iobox.into_raw()) }
+            let (ptr, len) = init_iobox.into_inner().into_raw_parts();
+            let ptr = ptr as *mut u8;
+            unsafe { IoBox::from_raw_parts(ptr, len) }
         }
     }
 }
@@ -2414,7 +2412,7 @@ mod tests {
         use std::io::Write;
 
         let iobox = IoBox::alloc_uninit(1024);
-        let initialized = iobox.init_by_filling(0xFF);
+        let initialized = iobox.init_by_filling(0xFF).into();
 
         let iobox2 = IoBox::alloc_zeroed(2048);
 
@@ -2458,14 +2456,12 @@ mod tests {
 /// In the future, when `&[u8]` starts implementing `AsRef<[MaybeUninit<u8>]>`, then this
 /// implementation must also ensure that the `AsRef` implementation is correct.
 pub unsafe trait Initialize: Sized {
-    type Item: Sized;
-
     /// Retrieve an immutable slice pointing to possibly uninitialized memory. __This must be
     /// exactly the same slice as the one from [`as_maybe_uninit_slice_mut`], or the trait
     /// implementation as a whole, gets incorrect.__
     ///
     /// [`as_maybe_uninit_slice_mut`]: #tymethod.as_maybe_uninit_slice_mut
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<Self::Item>];
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>];
 
     /// Retrieve a mutable slice pointing to possibly uninitialized memory. __This must always
     /// point to the same slice as with previous invocations__, and it must be safe to call
@@ -2476,7 +2472,7 @@ pub unsafe trait Initialize: Sized {
     /// The caller must not use the resulting slice to de-initialize the data.
     ///
     /// [`assume_init`]: #tymethod.assume_init
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<Self::Item>];
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>];
 }
 
 /// A trait for slices (or owned memory) that contain possibly uninitialized slices themselves.
@@ -2524,31 +2520,18 @@ pub unsafe trait InitializeVectored: Sized {
 }
 pub trait InitializeExt: private2::Sealed + Initialize {
     unsafe fn assume_init(self) -> Init<Self> {
-        Init::new_unchecked(self)
+        Init::new(self)
     }
     #[inline]
-    fn init_by_filling(mut self, byte: Self::Item) -> Init<Self> {
+    fn init_by_filling(mut self, byte: u8) -> Init<Self> {
         unsafe {
-            let slice = self.as_maybe_uninit_slice_mut();
-
-            // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
-            // know that memset most likely is faster (and cleaner) than a loop.
-            #[cfg(feature = "nightly")]
-            {
-                slice.fill(MaybeUninit::new(byte));
-            }
-
-            #[cfg(not(feature = "nightly"))]
-            for slice_byte in slice {
-                *slice_byte = MaybeUninit::new(byte);
-            }
-
+            fill_uninit_slice(self.as_maybe_uninit_slice_mut(), byte);
             self.assume_init()
         }
     }
 
     #[inline]
-    fn init_by_copying(mut self, source: &[Self::Item]) -> Init<Self> {
+    fn init_by_copying(mut self, source: &[u8]) -> Init<Self> {
         unsafe {
             let slice = self.as_maybe_uninit_slice_mut();
             assert_eq!(source.len(), slice.len(), "in order to fully initialize a slice-like type, the source slice must be exactly as large");
@@ -2574,8 +2557,6 @@ impl<T> private2::Sealed for T where T: Initialize {}
 impl<T> InitializeExt for T where T: Initialize {}
 
 unsafe impl<'a, I: Initialization> Initialize for IoSliceMut<'a, I> {
-    type Item = u8;
-
     #[inline]
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         #[forbid(unconditional_recursion)]
@@ -2587,48 +2568,44 @@ unsafe impl<'a, I: Initialization> Initialize for IoSliceMut<'a, I> {
         IoSliceMut::as_maybe_uninit_slice_mut(self)
     }
 }
-impl<'a, I> From<Init<IoSliceMut<'a, I>>> for IoSliceMut<'a, Initialized> {
+impl<'a, I: Initialization> From<Init<IoSliceMut<'a, I>>> for IoSliceMut<'a, Initialized> {
     #[inline]
     fn from(init_ioslice: Init<IoSliceMut<'a, I>>) -> IoSliceMut<'a, Initialized> {
         #[forbid(unconditional_recursion)]
-        IoSliceMut::assume_init(init_ioslice)
+        unsafe { IoSliceMut::assume_init(init_ioslice.into_inner()) }
     }
 }
 // TODO: splitting for IoSliceMut
 
-unsafe impl<'a, U> Initialize for &'a mut [U] {
-    type Item = U;
-
+unsafe impl<'a> Initialize for &'a mut [u8] {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         cast_init_to_uninit_slice(self)
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         cast_init_to_uninit_slice_mut(self)
     }
 }
-unsafe impl<'a, U> Initialize for &'a mut [MaybeUninit<U>] {
-    type Item = U;
-
+unsafe impl<'a> Initialize for &'a mut [MaybeUninit<u8>] {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         self
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
 }
 impl<'a, T> From<Init<&'a mut [MaybeUninit<T>]>> for &'a mut [T] {
     #[inline]
     fn from(init_slice: Init<&'a mut [MaybeUninit<T>]>) -> &'a mut [T] {
-        unsafe { cast_uninit_to_init_slice_mut(init_slice) }
+        unsafe { cast_uninit_to_init_slice_mut(init_slice.into_inner()) }
     }
 }
-unsafe impl<T, U> InitializeVectored for T
+unsafe impl<T> InitializeVectored for T
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     type UninitVector = Self;
 
@@ -2655,96 +2632,91 @@ unsafe impl<'a, 'b, I: Initialization> InitializeVectored for &'b mut [IoSliceMu
 }
 impl<'a, 'b, I: Initialization> From<InitVectors<&'b mut [IoSliceMut<'a, I>]>> for &'b mut [IoSliceMut<'a, Initialized>] {
     fn from(init_vectors: InitVectors<&'b mut [IoSliceMut<'a, I>]>) -> Self {
-        unsafe { IoSliceMut::cast_to_init_slices_mut(init_vectors) }
+        unsafe { IoSliceMut::cast_to_init_slices_mut(init_vectors.into_inner()) }
     }
 }
 #[cfg(feature = "alloc")]
-unsafe impl<U> Initialize for Box<[U]> {
-    type Item = U;
-
+unsafe impl Initialize for Box<[u8]> {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         cast_init_to_uninit_slice(self)
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         cast_init_to_uninit_slice_mut(self)
     }
 }
 #[cfg(feature = "alloc")]
-unsafe impl<U> Initialize for Box<[MaybeUninit<U>]> {
-    type Item = U;
-
+unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         self
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
 }
 #[cfg(feature = "alloc")]
-impl<U> From<Init<Box<[MaybeUninit<U>]>>> for Box<[U]> {
+impl From<Init<Box<[MaybeUninit<u8>]>>> for Box<[u8]> {
     #[inline]
-    fn from(init_box: Init<Box<[MaybeUninit<U>]>>) -> Box<[U]> {
+    fn from(init_box: Init<Box<[MaybeUninit<u8>]>>) -> Box<[u8]> {
         #[cfg(feature = "nightly")]
-        {
+        unsafe {
             #[forbid(unconditional_recursion)]
-            Box::<[MaybeUninit<U>]>::assume_init(init_box)
+            Box::<[MaybeUninit<u8>]>::assume_init(init_box.into_inner())
         }
         #[cfg(not(feature = "nightly"))]
-        {
-            let slice_ptr = Box::into_raw(init_box);
+        unsafe {
+            let slice_ptr = Box::into_raw(init_box.into_inner());
             Box::from_raw(cast_uninit_to_init_slice_mut(&mut *slice_ptr))
         }
     }
 }
 #[cfg(feature = "alloc")]
-unsafe impl<U> Initialize for Vec<U> {
-    type Item = U;
-
+unsafe impl Initialize for Vec<u8> {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         cast_init_to_uninit_slice(&*self)
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         // TODO: Give the whole allocation, and not just the length set? With MaybeUninit, calling
         // set_len is safe.
         cast_init_to_uninit_slice_mut(&mut *self)
     }
 }
 #[cfg(feature = "alloc")]
-unsafe impl<U> Initialize for Vec<MaybeUninit<U>> {
-    type Item = U;
-
+unsafe impl Initialize for Vec<MaybeUninit<u8>> {
     #[inline]
-    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<U>] {
+    fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         &*self
     }
     #[inline]
-    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         &mut *self
     }
 }
 #[cfg(feature = "alloc")]
-impl<T> From<Init<Vec<MaybeUninit<T>>>> for Vec<T> {
+impl From<Init<Vec<MaybeUninit<u8>>>> for Vec<u8> {
     #[inline]
-    fn from(init_vec: Init<Vec<MaybeUninit<T>>>) -> Vec<T> {
-        //let (ptr, cap, len) = Vec::into_raw_parts(self);
+    fn from(init_vec: Init<Vec<MaybeUninit<u8>>>) -> Vec<u8> {
+        unsafe {
+            let mut vec = init_vec.into_inner();
+            //let (ptr, cap, len) = Vec::into_raw_parts(self);
 
-        let (ptr, cap, len) = {
-            let ptr = init_vec.as_mut_ptr();
-            let cap = init_vec.capacity();
-            let len = init_vec.len();
+            let (ptr, cap, len) = {
+                let ptr = vec.as_mut_ptr();
+                let cap = vec.capacity();
+                let len = vec.len();
 
-            core::mem::forget(init_vec);
+                core::mem::forget(vec);
 
-            (ptr, cap, len)
-        };
+                (ptr, cap, len)
+            };
 
-        Vec::from_raw_parts(ptr as *mut T::Item, cap, len)
+            Vec::from_raw_parts(ptr as *mut u8, cap, len)
+        }
     }
 }
 #[inline]
@@ -2816,8 +2788,22 @@ pub unsafe fn cast_uninit_to_init_slice_mut<U>(uninit: &mut [MaybeUninit<U>]) ->
 /// Fill a possibly uninitialized mutable slice of bytes, with the same `byte`, returning the
 /// initialized slice.
 #[inline]
-pub fn fill_uninit_slice<U>(uninit: &mut [MaybeUninit<U>], byte: U) -> &mut [U] {
-    uninit.init_by_filling(byte)
+pub fn fill_uninit_slice<U: Copy>(slice: &mut [MaybeUninit<U>], byte: U) -> &mut [U] {
+    unsafe {
+        // NOTE: This is solely to allow for any improved optimizations nightly may offer; we all
+        // know that memset most likely is faster (and cleaner) than a loop.
+        #[cfg(feature = "nightly")]
+        {
+            slice.fill(MaybeUninit::new(byte));
+        }
+
+        #[cfg(not(feature = "nightly"))]
+        for slice_byte in slice.iter_mut() {
+            *slice_byte = MaybeUninit::new(byte);
+        }
+
+        cast_uninit_to_init_slice_mut(slice)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -2987,22 +2973,22 @@ impl<T> Init<T> {
         &mut self.inner
     }
 }
-impl<T, U> Init<T>
+impl<T> Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    pub fn get_init_ref(&self) -> &[U] {
+    pub fn get_init_ref(&self) -> &[u8] {
         unsafe { crate::cast_uninit_to_init_slice(self.inner().as_maybe_uninit_slice()) }
     }
     #[inline]
-    pub fn get_init_mut(&mut self) -> &mut [U] {
+    pub fn get_init_mut(&mut self) -> &mut [u8] {
         unsafe {
             crate::cast_uninit_to_init_slice_mut(self.inner_mut().as_maybe_uninit_slice_mut())
         }
     }
     #[inline]
-    pub fn get_uninit_ref(&self) -> &[MaybeUninit<U>] {
+    pub fn get_uninit_ref(&self) -> &[MaybeUninit<u8>] {
         self.inner().as_maybe_uninit_slice()
     }
     /// Get a mutable slice to the inner uninitialized slice.
@@ -3014,72 +3000,72 @@ where
     /// it allows for de-initialization. (This can happen when overwriting the resulting slice with
     /// [`MaybeUninit::uninit()`].
     #[inline]
-    pub unsafe fn get_uninit_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    pub unsafe fn get_uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.inner_mut().as_maybe_uninit_slice_mut()
     }
 }
-impl<T, U> AsRef<[U]> for Init<T>
+impl<T> AsRef<[u8]> for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn as_ref(&self) -> &[U] {
+    fn as_ref(&self) -> &[u8] {
         self.get_init_ref()
     }
 }
-impl<T, U> AsMut<[U]> for Init<T>
+impl<T> AsMut<[u8]> for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn as_mut(&mut self) -> &mut [U] {
+    fn as_mut(&mut self) -> &mut [u8] {
         self.get_init_mut()
     }
 }
-impl<T, U> AsRef<[MaybeUninit<U>]> for Init<T>
+impl<T> AsRef<[MaybeUninit<u8>]> for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn as_ref(&self) -> &[MaybeUninit<U>] {
+    fn as_ref(&self) -> &[MaybeUninit<u8>] {
         self.get_uninit_ref()
     }
 }
-impl<T, U> Borrow<[U]> for Init<T>
+impl<T> Borrow<[u8]> for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn borrow(&self) -> &[U] {
+    fn borrow(&self) -> &[u8] {
         self.get_init_ref()
     }
 }
-impl<T, U> BorrowMut<[U]> for Init<T>
+impl<T> BorrowMut<[u8]> for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn borrow_mut(&mut self) -> &mut [U] {
+    fn borrow_mut(&mut self) -> &mut [u8] {
         self.get_init_mut()
     }
 }
-impl<T, U> ops::Deref for Init<T>
+impl<T> ops::Deref for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
-    type Target = [U];
+    type Target = [u8];
 
     #[inline]
-    fn deref(&self) -> &[U] {
+    fn deref(&self) -> &[u8] {
         self.get_init_ref()
     }
 }
-impl<T, U> ops::DerefMut for Init<T>
+impl<T> ops::DerefMut for Init<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
-    fn deref_mut(&mut self) -> &mut [U] {
+    fn deref_mut(&mut self) -> &mut [u8] {
         self.get_init_mut()
     }
 }
@@ -3103,7 +3089,6 @@ where
 impl<T> Ord for Init<T>
 where
     T: Initialize,
-    T::Item: Ord,
 {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         Ord::cmp(self.get_init_ref(), other.get_init_ref())
@@ -3112,7 +3097,6 @@ where
 impl<T> core::hash::Hash for Init<T>
 where
     T: Initialize,
-    T::Item: core::hash::Hash,
 {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.get_init_ref().hash(state)
@@ -3122,4 +3106,10 @@ where
 #[repr(transparent)]
 pub struct InitVectors<I> {
     inner: I,
+}
+impl<I> InitVectors<I> {
+    #[inline]
+    pub fn into_inner(self) -> I {
+        self.inner
+    }
 }

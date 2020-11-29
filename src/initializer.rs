@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 
-use crate::{Init, Initialize};
+use crate::{Init, Initialize, InitializeExt as _};
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -52,9 +52,9 @@ impl<T> BufferInitializer<T> {
         self.bytes_initialized
     }
 }
-impl<T, U> BufferInitializer<T>
+impl<T> BufferInitializer<T>
 where
-    T: crate::Initialize<Item = U>,
+    T: crate::Initialize,
 {
     pub(crate) fn debug_assert_validity(&self) {
         debug_assert!(self.bytes_initialized <= self.capacity());
@@ -110,7 +110,7 @@ where
 
     /// Retrieve a slice of a possibly uninitialized bytes, over the entire buffer.
     #[inline]
-    pub fn all_uninit(&self) -> &[MaybeUninit<U>] {
+    pub fn all_uninit(&self) -> &[MaybeUninit<u8>] {
         self.inner.as_maybe_uninit_slice()
     }
     /// Retrieve a mutable slice of a possibly uninitialized bytes, over the entire buffer.
@@ -120,7 +120,7 @@ where
     /// This is unsafe, because the caller must not de-initialize the slice as the API also
     /// promises the initialized region to always actually be initialized.
     #[inline]
-    pub unsafe fn all_uninit_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    pub unsafe fn all_uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.inner.as_maybe_uninit_slice_mut()
     }
     /// Get the total size of the buffer that is being initialized.
@@ -154,7 +154,7 @@ where
     /// for completeness, since apart from some corner cases where one does not have exclusive
     /// access to the buffer but still wants to initialize it, is rather useless.
     #[inline]
-    pub fn uninit_part(&self) -> &[MaybeUninit<U>] {
+    pub fn uninit_part(&self) -> &[MaybeUninit<u8>] {
         let all = self.all_uninit();
 
         // Validate that bytes_filled is valid, when _debug assertions_ are enabled.
@@ -196,7 +196,7 @@ where
     /// Retrieve a shared slice to the initialized part of the buffer. Note that this is different
     /// from the _filled_ part, as a buffer can be fully initialized but not filled.
     #[inline]
-    pub fn init_part(&self) -> &[U] {
+    pub fn init_part(&self) -> &[u8] {
         // Validate that bytes_filled is valid, when _debug assertions_ are enabled.
         self.debug_assert_validity();
 
@@ -211,14 +211,14 @@ where
             // wrapper. We also uphold the validity variant, which is somewhat different in this
             // case, since we know that bytes_filled must be smaller than or equal to the size of
             // the slice.
-            core::slice::from_raw_parts(ptr as *const U, len)
+            core::slice::from_raw_parts(ptr as *const u8, len)
         }
     }
 
     /// Get a mutable slice to the uninitialized part of the buffer. Note that this is different
     /// from the unfilled part of it.
     #[inline]
-    pub fn uninit_part_mut(&mut self) -> &mut [MaybeUninit<U>] {
+    pub fn uninit_part_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         // NOTE: We extract pointers to avoid multiple mutable aliases when invoking
         // core::slice::from_raw_parts_mut.
         let (orig_ptr, orig_len) = unsafe {
@@ -244,7 +244,7 @@ where
     /// Retrieve a mutable slice to the initialized part of the buffer. Note that this is not the
     /// same as the filled part.
     #[inline]
-    pub fn init_part_mut(&mut self) -> &mut [U] {
+    pub fn init_part_mut(&mut self) -> &mut [u8] {
         let orig_ptr = unsafe { self.all_uninit_mut().as_mut_ptr() };
 
         unsafe {
@@ -254,7 +254,7 @@ where
             // SAFETY: This is safe for the exact same reasons as with `init_part`, except that we
             // also ensure that there is no access whatsoever to the inner data, since we are
             // borrowing `self` mutably.
-            core::slice::from_raw_parts_mut(ptr as *mut U, len)
+            core::slice::from_raw_parts_mut(ptr as *mut u8, len)
         }
     }
     /// Try to transform the initializing type, into its initialized counterpart, provided that the
@@ -269,7 +269,7 @@ where
     }
     /// Finish the initialization by writing `byte` to the uninitialized region, and then get the
     /// final initialized type.
-    pub fn finish_init_by_filling(mut self, byte: U) -> Init<T> {
+    pub fn finish_init_by_filling(mut self, byte: u8) -> Init<T> {
         self.fill_uninit_part(byte);
         unsafe { self.assume_init() }
     }
@@ -281,14 +281,14 @@ where
     /// [`assume_init`]: #method.assume_init
     /// [`try_into_init`]: #method.try_into_init
     #[inline]
-    pub fn fill_uninit_part(&mut self, byte: U) {
+    pub fn fill_uninit_part(&mut self, byte: u8) {
         crate::fill_uninit_slice(self.uninit_part_mut(), byte);
         unsafe {
             self.advance_to_end();
         }
     }
     #[inline]
-    pub fn partially_fill_uninit_part(&mut self, count: usize, byte: U) {
+    pub fn partially_fill_uninit_part(&mut self, count: usize, byte: u8) {
         crate::fill_uninit_slice(&mut self.uninit_part_mut()[..count], byte);
         // SAFETY: The slice indexing will already bounds check.
         unsafe { self.advance(count) }
@@ -303,12 +303,12 @@ where
     /// [`uninit_part_mut`]: #method.uninit_part_mut
     /// [`init_uninit_parts_mut`]: #method.init_uninit_parts_mut
     #[inline]
-    pub fn init_uninit_parts(&self) -> (&[U], &[MaybeUninit<U>]) {
+    pub fn init_uninit_parts(&self) -> (&[u8], &[MaybeUninit<u8>]) {
         (self.init_part(), self.uninit_part())
     }
     /// Borrow both the initialized as well as the uninitialized parts, mutably.
     #[inline]
-    pub fn init_uninit_parts_mut(&mut self) -> (&mut [U], &mut [MaybeUninit<U>]) {
+    pub fn init_uninit_parts_mut(&mut self) -> (&mut [u8], &mut [MaybeUninit<u8>]) {
         let (all_ptr, all_len) = unsafe {
             let all = self.all_uninit_mut();
 
@@ -318,7 +318,7 @@ where
         unsafe {
             self.debug_assert_validity();
 
-            let init_base_ptr = all_ptr as *mut U;
+            let init_base_ptr = all_ptr as *mut u8;
             let init_len = self.bytes_initialized;
 
             let uninit_base_ptr = all_ptr.add(self.bytes_initialized);
@@ -334,7 +334,7 @@ where
 // TODO: Other zeroable types than u8.
 impl<T> BufferInitializer<T>
 where
-    T: Initialize<Item = u8>,
+    T: Initialize,
 {
     /// Finish the initialization by zeroing uninitialized region, and then get the final
     /// initialized type.
@@ -402,10 +402,9 @@ impl<T> BuffersInitializer<T> {
     }
 }
 
-impl<T, V, U> BuffersInitializer<T>
+impl<T> BuffersInitializer<T>
 where
-    T: crate::InitializeVectored<UninitVector = V>,
-    V: Initialize<Item = U>,
+    T: crate::InitializeVectored,
 {
     #[inline]
     fn all_vectors_uninit(&self) -> &[T::UninitVector] {
@@ -414,7 +413,7 @@ where
 
     /// Retrieve the current buffer immutably, provided that there is one.
     #[inline]
-    pub fn current_vector_all(&self) -> Option<&[MaybeUninit<U>]> {
+    pub fn current_vector_all(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         if !self.all_vectors_uninit().is_empty() {
@@ -433,7 +432,7 @@ where
     ///
     /// This is unsafe because the caller must not de-initialize the buffer.
     #[inline]
-    pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<U>]> {
+    pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         if !self.all_vectors_uninit().is_empty() {
@@ -449,24 +448,24 @@ where
     }
 
     #[inline]
-    pub fn current_vector_init_part(&self) -> Option<&[U]> {
+    pub fn current_vector_init_part(&self) -> Option<&[u8]> {
         let (init_part, _) = self.current_vector_init_uninit_parts()?;
 
         Some(init_part)
     }
 
     #[inline]
-    pub fn current_vector_uninit_part(&self) -> Option<&[MaybeUninit<U>]> {
+    pub fn current_vector_uninit_part(&self) -> Option<&[MaybeUninit<u8>]> {
         let (_, uninit_part) = self.current_vector_init_uninit_parts()?;
 
         Some(uninit_part)
     }
     #[inline]
-    pub fn current_vector_init_uninit_parts(&self) -> Option<(&[U], &[MaybeUninit<U>])> {
+    pub fn current_vector_init_uninit_parts(&self) -> Option<(&[u8], &[MaybeUninit<u8>])> {
         let vector = self.current_vector_all()?;
 
         Some(unsafe {
-            let init_vector_base_ptr = vector.as_ptr() as *const U;
+            let init_vector_base_ptr = vector.as_ptr() as *const u8;
             let init_vector_len = self.bytes_initialized_for_vector;
 
             let init_vector = core::slice::from_raw_parts(init_vector_base_ptr, init_vector_len);
@@ -482,14 +481,14 @@ where
     }
 
     #[inline]
-    pub fn current_vector_init_part_mut(&mut self) -> Option<&mut [U]> {
+    pub fn current_vector_init_part_mut(&mut self) -> Option<&mut [u8]> {
         let (init_part_mut, _) = self.current_vector_init_uninit_parts_mut()?;
 
         Some(init_part_mut)
     }
 
     #[inline]
-    pub fn current_vector_uninit_part_mut(&mut self) -> Option<&mut [MaybeUninit<U>]> {
+    pub fn current_vector_uninit_part_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         let (_, uninit_part_mut) = self.current_vector_init_uninit_parts_mut()?;
 
         Some(uninit_part_mut)
@@ -497,14 +496,14 @@ where
     #[inline]
     pub fn current_vector_init_uninit_parts_mut(
         &mut self,
-    ) -> Option<(&mut [U], &mut [MaybeUninit<U>])> {
+    ) -> Option<(&mut [u8], &mut [MaybeUninit<u8>])> {
         let (orig_base_ptr, orig_len) = unsafe {
             let vector = self.current_vector_all_mut()?;
 
             (vector.as_mut_ptr(), vector.len())
         };
         Some(unsafe {
-            let init_vector_base_ptr = orig_base_ptr as *mut U;
+            let init_vector_base_ptr = orig_base_ptr as *mut u8;
             let init_vector_len = self.bytes_initialized_for_vector;
 
             let init_vector =

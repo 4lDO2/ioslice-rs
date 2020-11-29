@@ -96,9 +96,9 @@ impl<T> Buffer<T> {
     }
 }
 
-impl<T, U> Buffer<T>
+impl<T> Buffer<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -402,7 +402,7 @@ where
     #[inline]
     pub fn fill_by_zeroing(&mut self) {
         unsafe {
-            self.unfilled_part_mut().init_by_zeroing();
+            self.unfilled_part_mut().init_by_filling(0_u8);
         }
     }
 }
@@ -437,9 +437,9 @@ impl<'buffer, T> BufferRef<'buffer, T> {
     }
 }
 
-impl<'buffer, T, U> BufferRef<'buffer, T>
+impl<'buffer, T> BufferRef<'buffer, T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     #[inline]
     pub fn remaining(&self) -> usize {
@@ -498,9 +498,9 @@ where
     }
 }
 
-impl<T, U> fmt::Debug for Buffer<T>
+impl<T> fmt::Debug for Buffer<T>
 where
-    T: Initialize<Item = U>,
+    T: Initialize,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ptr = self.initializer().all_uninit().as_ptr();
@@ -644,12 +644,12 @@ mod tests {
         buffer.advance_to_init_part();
 
         // TODO: Shorthand?
-        let initialized: [u8; 32] = buffer.into_initializer().try_into_init().unwrap();
+        let initialized: [u8; 32] = buffer.into_initializer().try_into_init().unwrap().into();
         assert_eq!(&initialized, total);
     }
     #[test]
     fn debug_impl() {
-        let mut array = [MaybeUninit::<u8>::uninit(); 32];
+        let array = [MaybeUninit::<u8>::uninit(); 32];
         let mut buffer = Buffer::uninit(array);
         buffer.append(b"Hello, world!");
         buffer.initializer_mut().partially_zero_uninit_part(13);

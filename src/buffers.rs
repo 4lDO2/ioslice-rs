@@ -52,10 +52,9 @@ impl<T> Buffers<T> {
         self.vectors_filled
     }
 }
-impl<T, V, U> Buffers<T>
+impl<T> Buffers<T>
 where
-    T: InitializeVectored<UninitVector = V>,
-    V: Initialize<Item = U>,
+    T: InitializeVectored,
 {
     #[inline]
     pub fn all_previously_filled_vectors(&self) -> &[crate::Init<T::UninitVector>] {
@@ -82,7 +81,7 @@ where
         }
     }
     #[inline]
-    pub fn current_vector_all(&self) -> Option<&[MaybeUninit<U>]> {
+    pub fn current_vector_all(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         let all_vectors = self.initializer().all_uninit_vectors();
@@ -100,7 +99,7 @@ where
     ///
     /// The caller must not allow the returned slice to be de-initialized in safe code.
     #[inline]
-    pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<U>]> {
+    pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         let all_vectors_mut = self.initializer.all_uninit_vectors_mut();
@@ -116,7 +115,7 @@ where
         }
     }
     #[inline]
-    pub fn current_vector_init_uninit_parts(&self) -> Option<(&[U], &[MaybeUninit<U>])> {
+    pub fn current_vector_init_uninit_parts(&self) -> Option<(&[u8], &[MaybeUninit<u8>])> {
         self.debug_assert_validity();
 
         let ordering = self
@@ -144,7 +143,7 @@ where
     #[inline]
     pub fn current_vector_init_uninit_parts_mut(
         &mut self,
-    ) -> Option<(&mut [U], &mut [MaybeUninit<U>])> {
+    ) -> Option<(&mut [u8], &mut [MaybeUninit<u8>])> {
         self.debug_assert_validity();
 
         let ordering = self
@@ -165,29 +164,29 @@ where
         }
     }
     #[inline]
-    pub fn current_vector_filled_part(&self) -> Option<&[U]> {
+    pub fn current_vector_filled_part(&self) -> Option<&[u8]> {
         self.debug_assert_validity();
 
         let base_ptr = { self.current_vector_all()?.as_ptr() };
 
         Some(unsafe {
-            core::slice::from_raw_parts(base_ptr as *const U, self.bytes_filled_for_vector)
+            core::slice::from_raw_parts(base_ptr as *const u8, self.bytes_filled_for_vector)
         })
     }
     #[inline]
-    pub fn current_vector_filled_part_mut(&mut self) -> Option<&mut [U]> {
+    pub fn current_vector_filled_part_mut(&mut self) -> Option<&mut [u8]> {
         self.debug_assert_validity();
 
         unsafe {
             let base_ptr = { self.current_vector_all_mut()?.as_mut_ptr() };
             Some(core::slice::from_raw_parts_mut(
-                base_ptr as *mut U,
+                base_ptr as *mut u8,
                 self.bytes_filled_for_vector,
             ))
         }
     }
     #[inline]
-    pub fn current_vector_unfilled_all_part(&self) -> Option<&[MaybeUninit<U>]> {
+    pub fn current_vector_unfilled_all_part(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         let (base_ptr, base_len) = {
@@ -212,7 +211,7 @@ where
     #[inline]
     pub unsafe fn current_vector_unfilled_all_part_mut(
         &mut self,
-    ) -> Option<&mut [MaybeUninit<U>]> {
+    ) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
         let (base_ptr, base_len) = {
@@ -285,7 +284,7 @@ where
     }
     /// Return all vectors that have been fully filled, sequentially, as well as the filled part of
     /// the current vector in progress.
-    pub fn all_filled_vectors(&self) -> (&[crate::Init<T::UninitVector>], &[U]) {
+    pub fn all_filled_vectors(&self) -> (&[crate::Init<T::UninitVector>], &[u8]) {
         // TODO: Distinguish between None and Some(&[]). Do we really want optional values, when
         // empty slices work too?
         (
@@ -302,7 +301,7 @@ where
     ///
     /// [`current_vector_all_mut`]: #method.current_vector_all_mut
     // FIXME: which ones?
-    pub fn current_vector_parts(&self) -> Option<VectorParts<'_, U>> {
+    pub fn current_vector_parts(&self) -> Option<VectorParts<'_>> {
         self.debug_assert_validity();
 
         unsafe {
@@ -312,14 +311,14 @@ where
                 (src.as_ptr(), src.len())
             };
 
-            let filled_base_ptr = src_ptr as *const U;
+            let filled_base_ptr = src_ptr as *const u8;
             let filled_len = self.bytes_filled_for_vector;
 
             let init_len = self
                 .initializer()
                 .bytes_initialized_for_vector_unchecked(self.vectors_filled);
 
-            let unfilled_init_base_ptr = src_ptr.add(self.bytes_filled_for_vector) as *const U;
+            let unfilled_init_base_ptr = src_ptr.add(self.bytes_filled_for_vector) as *const u8;
             let unfilled_init_len = init_len - filled_len;
 
             let unfilled_uninit_base_ptr = src_ptr.add(init_len);
@@ -340,7 +339,7 @@ where
     }
     /// For the current vector, return the unfilled and initialized part, the unfilled but
     /// initialized part, and the unfilled and uninitialized part mutably, in that order.
-    pub fn current_vector_parts_mut(&mut self) -> Option<VectorPartsMut<'_, U>> {
+    pub fn current_vector_parts_mut(&mut self) -> Option<VectorPartsMut<'_>> {
         self.debug_assert_validity();
 
         unsafe {
@@ -350,14 +349,14 @@ where
                 (src.as_mut_ptr(), src.len())
             };
 
-            let filled_base_ptr = src_ptr as *mut U;
+            let filled_base_ptr = src_ptr as *mut u8;
             let filled_len = self.bytes_filled_for_vector;
 
             let init_len = self
                 .initializer()
                 .bytes_initialized_for_vector_unchecked(self.vectors_filled);
 
-            let unfilled_init_base_ptr = src_ptr.add(self.bytes_filled_for_vector) as *mut U;
+            let unfilled_init_base_ptr = src_ptr.add(self.bytes_filled_for_vector) as *mut u8;
             let unfilled_init_len = init_len - filled_len;
 
             let unfilled_uninit_base_ptr = src_ptr.add(init_len);
@@ -414,16 +413,16 @@ where
     }
 }
 #[derive(Clone, Copy, Debug, Default)]
-pub struct VectorParts<'a, U> {
-    pub filled: &'a [U],
-    pub unfilled_init: &'a [U],
-    pub unfilled_uninit: &'a [MaybeUninit<U>],
+pub struct VectorParts<'a> {
+    pub filled: &'a [u8],
+    pub unfilled_init: &'a [u8],
+    pub unfilled_uninit: &'a [MaybeUninit<u8>],
 }
 #[derive(Debug, Default)]
-pub struct VectorPartsMut<'a, U> {
-    pub filled: &'a mut [U],
-    pub unfilled_init: &'a mut [U],
-    pub unfilled_uninit: &'a mut [MaybeUninit<U>],
+pub struct VectorPartsMut<'a> {
+    pub filled: &'a mut [u8],
+    pub unfilled_init: &'a mut [u8],
+    pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
 }
 
 #[cfg(test)]

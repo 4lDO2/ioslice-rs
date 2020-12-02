@@ -1523,8 +1523,6 @@ unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 
 #[cfg(feature = "nightly")]
 unsafe impl<const N: usize> Initialize for [u8; N] {
-    type Initialized = [u8; N];
-
     #[inline]
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         cast_init_to_uninit_slice(&*self)
@@ -1533,16 +1531,9 @@ unsafe impl<const N: usize> Initialize for [u8; N] {
     unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         cast_init_to_uninit_slice_mut(&mut *self)
     }
-
-    #[inline]
-    unsafe fn assume_init(self) -> [u8; N] {
-        self
-    }
 }
 #[cfg(feature = "nightly")]
 unsafe impl<const N: usize> Initialize for [MaybeUninit<u8>; N] {
-    type Initialized = [u8; N];
-
     #[inline]
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
         self
@@ -1551,26 +1542,30 @@ unsafe impl<const N: usize> Initialize for [MaybeUninit<u8>; N] {
     unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
-
+}
+#[cfg(feature = "nightly")]
+impl<const N: usize> From<Init<[MaybeUninit<u8>; N]>> for [u8; N] {
     #[inline]
-    unsafe fn assume_init(self) -> [u8; N] {
-        // SAFETY: This is safe, since [u8; N] and [MaybeUninit<u8>; N] are guaranteed to have the
-        // exact same layouts, making them interchangable except for the initialization invariant,
-        // which the caller must uphold.
+    fn from(init: Init<[MaybeUninit<u8>; N]>) -> [u8; N] {
+        unsafe {
+            // SAFETY: This is safe, since [u8; N] and [MaybeUninit<u8>; N] are guaranteed to have the
+            // exact same layouts, making them interchangable except for the initialization invariant,
+            // which the caller must uphold.
 
-        // XXX: This should ideally work. See issue https://github.com/rust-lang/rust/issues/61956
-        // for more information.
-        //
-        // core::mem::transmute::<[MaybeUninit<u8>; N], [u8; N]>(self)
-        //
-        // ... but, we'll have to rely on transmute_copy, which is more dangerous and requires the
-        // original type to be dropped. We have no choice. Hopefully the optimizer will understand
-        // this as well as it understands the regular transmute.
-        //
-        // XXX: Another solution would be to introduce assume_init for const-generic arrays.
-        let init = core::mem::transmute_copy(&self);
-        core::mem::forget(self);
-        init
+            // XXX: This should ideally work. See issue https://github.com/rust-lang/rust/issues/61956
+            // for more information.
+            //
+            // core::mem::transmute::<[MaybeUninit<u8>; N], [u8; N]>(self)
+            //
+            // ... but, we'll have to rely on transmute_copy, which is more dangerous and requires the
+            // original type to be dropped. We have no choice. Hopefully the optimizer will understand
+            // this as well as it understands the regular transmute.
+            //
+            // XXX: Another solution would be to introduce assume_init for const-generic arrays.
+            let init = core::mem::transmute_copy(&init);
+            core::mem::forget(init);
+            init
+        }
     }
 }
 

@@ -100,7 +100,9 @@ mod private {
     pub trait Sealed {}
 }
 
-pub unsafe trait Initialization: private::Sealed + Sized + 'static + Send + Sync + Unpin {
+pub unsafe trait Initialization:
+    private::Sealed + Sized + 'static + Send + Sync + Unpin
+{
     const IS_INITIALIZED: bool;
     type DerefTargetItem: fmt::Debug;
 }
@@ -138,6 +140,9 @@ use winapi::shared::{
     ws2def::WSABUF,
 };
 
+#[cfg(feature = "redox_syscall")]
+use syscall::data::IoVec;
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
@@ -154,8 +159,11 @@ extern crate alloc;
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct IoSlice<'a, I: Initialization = Initialized> {
-    #[cfg(all(unix, feature = "libc"))]
+    #[cfg(all(unix, feature = "libc", not(all(feature = "redox_syscall"))))]
     inner: (libc::iovec, PhantomData<&'a [I::DerefTargetItem]>),
+
+    #[cfg(feature = "redox_syscall")]
+    inner: (IoVec, PhantomData<&'a [I::DerefTargetItem]>),
 
     #[cfg(all(windows, feature = "winapi"))]
     inner: (WSABUF, PhantomData<&'a [I::DerefTargetItem]>),
@@ -245,7 +253,17 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[inline]
     pub unsafe fn from_raw_iovec(slice: libc::iovec) -> Self {
         Self {
+            #[cfg(not(feature = "redox_syscall"))]
             inner: (slice, PhantomData),
+
+            #[cfg(feature = "redox_syscall")]
+            inner: (
+                IoVec {
+                    addr: slice.iov_base as usize,
+                    len: slice.iov_len,
+                },
+                PhantomData,
+            ),
             _marker: PhantomData,
         }
     }
@@ -275,7 +293,14 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     #[cfg(all(unix, feature = "libc"))]
     #[inline]
     pub fn as_raw_iovec(&self) -> libc::iovec {
-        self.inner.0
+        #[cfg(not(feature = "redox_syscall"))]
+        return self.inner.0;
+
+        #[cfg(feature = "redox_syscall")]
+        return libc::iovec {
+            iov_base: self.inner.0.addr as *mut libc::c_void,
+            iov_len: self.inner.0.len,
+        };
     }
 
     /// Retrieve the inner WSABUF from this I/O slice.
@@ -401,47 +426,14 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     /// [`as_maybe_uninit_slice`]: #method.as_maybe_uninit_slice
     #[inline]
     pub fn inner_data(&self) -> &'a [I::DerefTargetItem] {
-        #[cfg(all(unix, feature = "libc"))]
-        return unsafe {
-            core::slice::from_raw_parts(self.inner.0.iov_base as *const _, self.inner.0.iov_len)
-        };
-        #[cfg(all(windows, feature = "winapi"))]
-        return unsafe {
-            core::slice::from_raw_parts(self.inner.0.buf as *const _, self.inner.0.len as usize)
-        };
-
-        #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-        return unsafe {
-            core::slice::from_raw_parts(self.inner.as_ptr() as *const _, self.inner.len())
-        };
+        unsafe {
+            core::slice::from_raw_parts(self.__ptr() as *const I::DerefTargetItem, self.__len())
+        }
     }
     /// Construct an I/O slice based on the inner data, which is either `[u8]` or `[MaybeUninit]`.
     #[inline]
     pub fn from_inner_data(inner_data: &'a [I::DerefTargetItem]) -> Self {
-        Self {
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: inner_data.as_ptr() as *mut libc::c_void,
-                    iov_len: inner_data.len(),
-                },
-                PhantomData,
-            ),
-
-            #[cfg(all(windows, feature = "winapi"))]
-            inner: (
-                WSABUF {
-                    len: inner_data.len() as ULONG,
-                    buf: inner_data.as_ptr() as *mut CHAR,
-                },
-                PhantomData,
-            ),
-
-            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: inner_data,
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(inner_data.as_ptr() as *const u8, inner_data.len()) }
     }
     /// Retrieve a slice of possibly uninitialized data, but which is still always valid.
     #[inline]
@@ -449,8 +441,11 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         self.as_uninit().inner_data()
     }
     fn __ptr(&self) -> *const u8 {
-        #[cfg(all(unix, feature = "libc"))]
+        #[cfg(all(unix, feature = "libc", not(feature = "redox_syscall")))]
         return self.inner.0.iov_base as *const u8;
+
+        #[cfg(feature = "redox_syscall")]
+        return self.inner.0.addr as *const u8;
 
         #[cfg(all(windows, feature = "winapi"))]
         return self.inner.0.buf as *const u8;
@@ -459,8 +454,11 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         return self.inner.as_ptr() as *const u8;
     }
     fn __len(&self) -> usize {
-        #[cfg(all(unix, feature = "libc"))]
+        #[cfg(all(unix, feature = "libc", not(feature = "redox_syscall")))]
         return self.inner.0.iov_len as usize;
+
+        #[cfg(feature = "redox_syscall")]
+        return self.inner.0.len;
 
         #[cfg(all(windows, feature = "winapi"))]
         return self.inner.0.len as usize;
@@ -470,9 +468,13 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     }
     #[inline]
     unsafe fn __set_ptr(&mut self, ptr: *const u8) {
-        #[cfg(all(unix, feature = "libc"))]
+        #[cfg(all(unix, feature = "libc", not(feature = "redox_syscall")))]
         {
             self.inner.0.iov_base = ptr as *mut libc::c_void;
+        }
+        #[cfg(feature = "redox_syscall")]
+        {
+            self.inner.0.addr = ptr as usize;
         }
 
         #[cfg(all(windows, feature = "winapi"))]
@@ -488,9 +490,13 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
     }
     #[inline]
     unsafe fn __set_len(&mut self, len: usize) {
-        #[cfg(all(unix, feature = "libc"))]
+        #[cfg(all(unix, feature = "libc", not(feature = "redox_syscall")))]
         {
             self.inner.0.iov_len = len as usize;
+        }
+        #[cfg(feature = "redox_syscall")]
+        {
+            self.inner.0.len = len;
         }
 
         #[cfg(all(windows, feature = "libc"))]
@@ -513,11 +519,19 @@ impl<'a, I: Initialization> IoSlice<'a, I> {
         use core::convert::TryInto;
 
         Self {
-            #[cfg(all(unix, feature = "libc"))]
+            #[cfg(all(unix, feature = "libc", not(feature = "redox_syscall")))]
             inner: (
                 libc::iovec {
                     iov_base: ptr as *mut libc::c_void,
                     iov_len: len as usize,
+                },
+                PhantomData,
+            ),
+            #[cfg(feature = "redox_syscall")]
+            inner: (
+                IoVec {
+                    addr: ptr as usize,
+                    len,
                 },
                 PhantomData,
             ),
@@ -754,38 +768,7 @@ impl<'a> hash::Hash for IoSlice<'a, Initialized> {
 impl<'a, I: Initialization> From<std::io::IoSlice<'a>> for IoSlice<'a, I> {
     #[inline]
     fn from(slice: std::io::IoSlice<'a>) -> Self {
-        Self {
-            // NOTE: `std::io::IoSlice` somehow has no method available to access the slice at
-            // lifetime `'a`, but only the lifetime of the wrapped slice. Hence, we must do this
-            // manually.
-            // TODO: Is this possible?
-            #[cfg(all(unix, feature = "libc"))]
-            inner: (
-                libc::iovec {
-                    iov_base: slice.as_ptr() as *mut libc::c_void,
-                    iov_len: slice.len(),
-                },
-                PhantomData,
-            ),
-
-            #[cfg(all(windows, feature = "winapi"))]
-            inner: (
-                WSABUF {
-                    len: slice.len() as ULONG,
-                    buf: slice.as_ptr() as *mut CHAR,
-                },
-                PhantomData,
-            ),
-            #[cfg(not(any(all(unix, feature = "libc"), all(windows, feature = "winapi"))))]
-            inner: unsafe {
-                core::slice::from_raw_parts(
-                    slice.as_ptr() as *const I::DerefTargetItem,
-                    slice.len(),
-                )
-            },
-
-            _marker: PhantomData,
-        }
+        unsafe { Self::__construct(slice.as_ptr(), slice.len()) }
     }
 }
 #[cfg(feature = "std")]
@@ -2519,6 +2502,11 @@ pub unsafe trait InitializeVectored: Sized {
     unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector];
 }
 pub trait InitializeExt: private2::Sealed + Initialize {
+    /// Assume that the type is already initialized. This is equivalent of calling [`Init::new`].
+    ///
+    /// # Safety
+    ///
+    /// The initialization invariant must be upheld for this to be safe.
     unsafe fn assume_init(self) -> Init<Self> {
         Init::new(self)
     }
@@ -2572,7 +2560,9 @@ impl<'a, I: Initialization> From<Init<IoSliceMut<'a, I>>> for IoSliceMut<'a, Ini
     #[inline]
     fn from(init_ioslice: Init<IoSliceMut<'a, I>>) -> IoSliceMut<'a, Initialized> {
         #[forbid(unconditional_recursion)]
-        unsafe { IoSliceMut::assume_init(init_ioslice.into_inner()) }
+        unsafe {
+            IoSliceMut::assume_init(init_ioslice.into_inner())
+        }
     }
 }
 // TODO: splitting for IoSliceMut
@@ -2630,7 +2620,9 @@ unsafe impl<'a, 'b, I: Initialization> InitializeVectored for &'b mut [IoSliceMu
         IoSliceMut::cast_to_uninit_slices_mut(self)
     }
 }
-impl<'a, 'b, I: Initialization> From<InitVectors<&'b mut [IoSliceMut<'a, I>]>> for &'b mut [IoSliceMut<'a, Initialized>] {
+impl<'a, 'b, I: Initialization> From<InitVectors<&'b mut [IoSliceMut<'a, I>]>>
+    for &'b mut [IoSliceMut<'a, Initialized>]
+{
     fn from(init_vectors: InitVectors<&'b mut [IoSliceMut<'a, I>]>) -> Self {
         unsafe { IoSliceMut::cast_to_init_slices_mut(init_vectors.into_inner()) }
     }

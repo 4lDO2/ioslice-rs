@@ -3100,3 +3100,14 @@ impl<I> InitVectors<I> {
         self.inner
     }
 }
+
+unsafe impl<'a, 'b> InitializeVectored for &'a mut [&'b mut [MaybeUninit<u8>]] {
+    type UninitVector = &'b mut [MaybeUninit<u8>];
+
+    fn as_maybe_uninit_vectors(&self) -> &[Self::UninitVector] {
+        self
+    }
+    unsafe fn as_maybe_uninit_vectors_mut(&mut self) -> &mut [Self::UninitVector] {
+        self
+    }
+}

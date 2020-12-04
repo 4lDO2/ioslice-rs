@@ -411,6 +411,58 @@ where
             current_vector.len() - self.bytes_filled_for_vector
         })
     }
+    /// Advance the current vector by `count` bytes.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if the initialized part of the current vector is exceeded. When calling
+    /// this in FFI contexts, you must call the advance functions in the initializer before calling
+    /// this.
+    pub fn advance_current_vector(&mut self, count: usize) {
+        let current_vector_all_len = match self.current_vector_all() {
+            Some(current) => current.len(),
+            None => panic!("cannot advance the current vector by {} B, since no vectors were left", count),
+        };
+
+        let ordering = Ord::cmp(&self.vectors_filled(), &self.initializer().vectors_initialized());
+
+        let end = self.bytes_filled_for_vector + count;
+
+        match ordering {
+            core::cmp::Ordering::Equal => {
+                assert!(end <= self.initializer().bytes_initialized_for_current_vector(), "cannot advance the fill count beyond the initialized part");
+                debug_assert!(end <= current_vector_all_len);
+            }
+            core::cmp::Ordering::Less => {
+                assert!(end <= current_vector_all_len, "cannot advance the current vector beyond the end");
+            }
+            core::cmp::Ordering::Greater => unsafe { core::hint::unreachable_unchecked() },
+        }
+
+        self.bytes_filled_for_vector += end;
+
+        if self.bytes_filled_for_vector == current_vector_all_len {
+            self.vectors_filled += 1;
+            self.bytes_filled_for_vector = 0;
+        }
+    }
+    pub fn advance_to_current_vector_end(&mut self) {
+        let current_vector_all = match self.current_vector_all() {
+            Some(current) => current,
+            None => panic!("cannot advance the current vector to end, when there are no vectors left"),
+        };
+
+        let ordering = Ord::cmp(&self.vectors_filled(), &self.initializer().vectors_initialized());
+
+        match ordering {
+            core::cmp::Ordering::Equal => assert_eq!(self.initializer().bytes_initialized_for_current_vector(), current_vector_all.len()),
+            core::cmp::Ordering::Less => (),
+            core::cmp::Ordering::Greater => unsafe { core::hint::unreachable_unchecked() },
+        }
+
+        self.vectors_filled += 1;
+        self.bytes_filled_for_vector = 0;
+    }
 }
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VectorParts<'a> {
@@ -425,8 +477,8 @@ pub struct VectorPartsMut<'a> {
     pub unfilled_uninit: &'a mut [MaybeUninit<u8>],
 }
 
-pub struct BuffersRef<'buffer, T> {
-    inner: &'buffer mut Buffers<T>,
+pub struct BuffersRef<'buffers, T> {
+    inner: &'buffers mut Buffers<T>,
 }
 impl<T> Buffers<T> {
     #[inline]
@@ -434,7 +486,7 @@ impl<T> Buffers<T> {
         BuffersRef { inner: self }
     }
 }
-impl<'buffer, T> BuffersRef<'buffer, T> {
+impl<'buffers, T> BuffersRef<'buffers, T> {
     #[inline]
     pub fn by_ref(&mut self) -> BuffersRef<'_, T> {
         BuffersRef { inner: self.inner }

@@ -416,10 +416,12 @@ where
     pub fn current_vector_all(&self) -> Option<&[MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
-        if !self.all_vectors_uninit().is_empty() {
+        let vectors_initialized = self.vectors_initialized;
+
+        if vectors_initialized != self.total_vector_count() {
             Some(unsafe {
                 self.all_vectors_uninit()
-                    .get_unchecked(self.vectors_initialized)
+                    .get_unchecked(vectors_initialized)
                     .as_maybe_uninit_slice()
             })
         } else {
@@ -435,9 +437,9 @@ where
     pub unsafe fn current_vector_all_mut(&mut self) -> Option<&mut [MaybeUninit<u8>]> {
         self.debug_assert_validity();
 
-        if !self.all_vectors_uninit().is_empty() {
-            let vectors_initialized = self.vectors_initialized;
+        let vectors_initialized = self.vectors_initialized;
 
+        if vectors_initialized != self.total_vector_count() {
             let all_vectors_uninit_mut = self.all_uninit_vectors_mut();
             let current_vector_uninit_mut =
                 all_vectors_uninit_mut.get_unchecked_mut(vectors_initialized);
@@ -521,8 +523,10 @@ where
 
     fn debug_assert_validity(&self) {
         debug_assert!(self
-            .current_vector_all()
-            .map_or(true, |current_vector| current_vector.len()
+            .inner
+            .as_maybe_uninit_vectors()
+            .get(self.vectors_initialized)
+            .map_or(true, |current_vector| current_vector.as_maybe_uninit_slice().len()
                 >= self.bytes_initialized_for_vector));
         debug_assert!(self.bytes_initialized_for_vector <= isize::MAX as usize);
         debug_assert!(self.inner.as_maybe_uninit_vectors().len() >= self.vectors_initialized);
@@ -673,10 +677,49 @@ where
     ///
     /// [`vectors_remaining`]: #method.vectors_remaining
     pub unsafe fn advance_current_vector_to_end(&mut self) {
-        debug_assert!(self.vectors_initialized + 1 < self.total_vector_count());
+        self.debug_assert_validity();
 
         self.vectors_initialized += 1;
         self.bytes_initialized_for_vector = 0;
+    }
+    pub unsafe fn advance_current_vector(&mut self, count: usize) {
+        self.debug_assert_validity();
+
+        if let Some(current_vector) = self.current_vector_all() {
+            let current_vector_len = current_vector.len();
+            let end = self.bytes_initialized_for_vector + count;
+
+            assert!(end <= current_vector_len);
+
+            if end == current_vector_len {
+                self.vectors_initialized += 1;
+                self.bytes_initialized_for_vector = 0;
+            } else {
+                self.bytes_initialized_for_vector = end;
+            }
+        } else if count > 0 {
+            panic!("cannot advance beyond the end of the current vector")
+        }
+    }
+    pub fn partially_fill_current_vector_uninit_part(&mut self, count: usize, byte: u8) {
+        if let Some(current_vector_uninit_part_mut) = self.current_vector_uninit_part_mut() {
+            crate::fill_uninit_slice(&mut current_vector_uninit_part_mut[..count], byte);
+            unsafe { self.advance_current_vector(count) }
+        } else if count > 0 {
+            panic!("cannot partially fill a vector when none are left");
+        }
+    }
+    pub fn partially_zero_current_vector_uninit_part(&mut self, count: usize) {
+        self.partially_fill_current_vector_uninit_part(count, 0_u8)
+    }
+    pub fn fill_current_vector_uninit_part(&mut self, byte: u8) {
+        if let Some(current_vector_uninit_part_mut) = self.current_vector_uninit_part_mut() {
+            crate::fill_uninit_slice(current_vector_uninit_part_mut, byte);
+            unsafe { self.advance_current_vector_to_end() }
+        }
+    }
+    pub fn zero_current_vector_uninit_part(&mut self) {
+        self.fill_current_vector_uninit_part(0_u8)
     }
 }
 
@@ -684,24 +727,60 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn basic_initialization() {
-        let mut slice = [MaybeUninit::uninit(); 32];
-        let buffer = BufferInitializer::uninit(&mut slice[..]);
-        let initialized = buffer.finish_init_by_filling(42_u8);
-        assert!(initialized.iter().all(|&byte| byte == 42_u8));
+    mod single {
+        use super::*;
+
+        #[test]
+        fn basic_initialization() {
+            let mut slice = [MaybeUninit::uninit(); 32];
+            let buffer = BufferInitializer::uninit(&mut slice[..]);
+            let initialized = buffer.finish_init_by_filling(42_u8);
+            assert!(initialized.iter().all(|&byte| byte == 42_u8));
+        }
+        #[test]
+        fn buffer_parts() {
+            let mut slice = [MaybeUninit::uninit(); 32];
+            let mut buffer = BufferInitializer::uninit(&mut slice[..]);
+
+            assert_eq!(buffer.uninit_part().len(), 32);
+            assert_eq!(buffer.uninit_part_mut().len(), 32);
+            assert_eq!(buffer.init_part(), &[]);
+            assert_eq!(buffer.init_part_mut(), &mut []);
+            assert!(!buffer.is_completely_init());
+
+            // TODO: Fill partially, and then check further.
+        }
     }
-    #[test]
-    fn buffer_parts() {
-        let mut slice = [MaybeUninit::uninit(); 32];
-        let mut buffer = BufferInitializer::uninit(&mut slice[..]);
+    mod vectored {
+        use super::*;
 
-        assert_eq!(buffer.uninit_part().len(), 32);
-        assert_eq!(buffer.uninit_part_mut().len(), 32);
-        assert_eq!(buffer.init_part(), &[]);
-        assert_eq!(buffer.init_part_mut(), &mut []);
-        assert!(!buffer.is_completely_init());
+        #[test]
+        fn fill_uninit_part() {
+            let mut first = [MaybeUninit::uninit(); 32];
+            let mut second = [MaybeUninit::uninit(); 128];
+            let mut third = [MaybeUninit::uninit(); 64];
 
-        // TODO: Fill partially, and then check further.
+            let mut vectors = [&mut first[..], &mut second[..], &mut third[..]];
+            let mut initializer = BuffersInitializer::uninit(&mut vectors[..]);
+
+            initializer.zero_current_vector_uninit_part();
+            assert_eq!(initializer.vectors_initialized(), 1);
+            assert_eq!(initializer.bytes_initialized_for_current_vector(), 0);
+
+            initializer.partially_zero_current_vector_uninit_part(96);
+            assert_eq!(initializer.vectors_initialized(), 1);
+            assert_eq!(initializer.bytes_initialized_for_current_vector(), 96);
+
+            initializer.partially_fill_current_vector_uninit_part(32, 0x13_u8);
+            assert_eq!(initializer.vectors_initialized(), 2);
+            assert_eq!(initializer.bytes_initialized_for_current_vector(), 0);
+
+            initializer.partially_fill_current_vector_uninit_part(16, 0x37_u8);
+            assert_eq!(initializer.vectors_initialized(), 2);
+            assert_eq!(initializer.bytes_initialized_for_current_vector(), 16);
+            initializer.fill_current_vector_uninit_part(0x42);
+            assert_eq!(initializer.vectors_initialized(), 3);
+            assert!(initializer.current_vector_all().is_none());
+        }
     }
 }

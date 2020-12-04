@@ -547,6 +547,12 @@ where
     pub fn with_current_vector_unfilled_zeroed(&mut self) -> Option<&mut [u8]> {
         self.inner.with_current_vector_unfilled_zeroed()
     }
+    pub fn advance_current_vector(&mut self, count: usize) {
+        self.inner.advance_current_vector(count)
+    }
+    pub fn advance_to_current_vector_end(&mut self) {
+        self.inner.advance_to_current_vector_end()
+    }
 }
 
 #[cfg(test)]

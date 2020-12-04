@@ -540,6 +540,14 @@ impl<'buffers, T> BuffersRef<'buffers, T> {
         BuffersRef { inner: self.inner }
     }
 }
+impl<'buffers, T> BuffersRef<'buffers, T>
+where
+    T: InitializeVectored,
+{
+    pub fn with_current_vector_unfilled_zeroed(&mut self) -> Option<&mut [u8]> {
+        self.inner.with_current_vector_unfilled_zeroed()
+    }
+}
 
 #[cfg(test)]
 mod tests {

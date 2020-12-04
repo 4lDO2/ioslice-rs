@@ -14,8 +14,8 @@ use crate::{Initialize, InitializeExt};
 use crate::initializer::BufferInitializer;
 
 pub struct Buffer<T> {
-    initializer: BufferInitializer<T>,
-    bytes_filled: usize,
+    pub(crate) initializer: BufferInitializer<T>,
+    pub(crate) bytes_filled: usize,
 }
 
 /// A reference to a [`Buffer`], which is meant be a subset of the functionality offered by the

@@ -365,14 +365,14 @@ pub struct BuffersInitializer<T> {
     // The inner buffer. At the moment there is no type-level restriction that it has to implement
     // InitializeVectored for BuffersInitializer to be able to wrap it (to allow for const fn), but
     // that may change in a future release.
-    inner: T,
+    pub(crate) inner: T,
 
     // A cursor marking the number of _vectors_ that have been fully initialized. Once
     // `bytes_initialized_for_vector` approaches the length of the vector indexed by this field,
     // this index will increment, and `bytes_initialized_for_vector` will reset to zero. Vectors
     // with length zero are skipped entirely.
-    vectors_initialized: usize,
-    bytes_initialized_for_vector: usize,
+    pub(crate) vectors_initialized: usize,
+    pub(crate) bytes_initialized_for_vector: usize,
 }
 
 impl<T> BuffersInitializer<T> {
@@ -399,6 +399,17 @@ impl<T> BuffersInitializer<T> {
         let (inner, _, _) = self.into_raw_parts();
 
         inner
+    }
+}
+impl<T> BuffersInitializer<crate::Single<T>> {
+    pub fn from_single_buffer_initializer(single: BufferInitializer<T>) -> Self {
+        let BufferInitializer { bytes_initialized, inner } = single;
+
+        Self {
+            bytes_initialized_for_vector: bytes_initialized,
+            vectors_initialized: 0,
+            inner: crate::Single(inner),
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use core::mem::MaybeUninit;
 
+use crate::buffer::Buffer;
 use crate::initializer::BuffersInitializer;
 use crate::{Initialize, InitializeVectored};
 
@@ -510,6 +511,20 @@ where
 
             crate::cast_uninit_to_init_slice_mut(current_vector_all)
         })
+    }
+}
+impl<T> Buffers<crate::Single<T>>
+where
+    T: Initialize,
+{
+    pub fn from_single_buffer(buffer: Buffer<T>) -> Self {
+        let Buffer { initializer, bytes_filled } = buffer;
+
+        Self {
+            initializer: BuffersInitializer::from_single_buffer_initializer(initializer),
+            bytes_filled_for_vector: bytes_filled,
+            vectors_filled: 0,
+        }
     }
 }
 #[derive(Clone, Copy, Debug, Default)]

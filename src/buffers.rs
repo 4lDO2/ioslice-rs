@@ -421,20 +421,32 @@ where
     pub fn advance_current_vector(&mut self, count: usize) {
         let current_vector_all_len = match self.current_vector_all() {
             Some(current) => current.len(),
-            None => panic!("cannot advance the current vector by {} B, since no vectors were left", count),
+            None => panic!(
+                "cannot advance the current vector by {} B, since no vectors were left",
+                count
+            ),
         };
 
-        let ordering = Ord::cmp(&self.vectors_filled(), &self.initializer().vectors_initialized());
+        let ordering = Ord::cmp(
+            &self.vectors_filled(),
+            &self.initializer().vectors_initialized(),
+        );
 
         let end = self.bytes_filled_for_vector + count;
 
         match ordering {
             core::cmp::Ordering::Equal => {
-                assert!(end <= self.initializer().bytes_initialized_for_current_vector(), "cannot advance the fill count beyond the initialized part");
+                assert!(
+                    end <= self.initializer().bytes_initialized_for_current_vector(),
+                    "cannot advance the fill count beyond the initialized part"
+                );
                 debug_assert!(end <= current_vector_all_len);
             }
             core::cmp::Ordering::Less => {
-                assert!(end <= current_vector_all_len, "cannot advance the current vector beyond the end");
+                assert!(
+                    end <= current_vector_all_len,
+                    "cannot advance the current vector beyond the end"
+                );
             }
             core::cmp::Ordering::Greater => unsafe { core::hint::unreachable_unchecked() },
         }
@@ -449,19 +461,55 @@ where
     pub fn advance_to_current_vector_end(&mut self) {
         let current_vector_all = match self.current_vector_all() {
             Some(current) => current,
-            None => panic!("cannot advance the current vector to end, when there are no vectors left"),
+            None => {
+                panic!("cannot advance the current vector to end, when there are no vectors left")
+            }
         };
 
-        let ordering = Ord::cmp(&self.vectors_filled(), &self.initializer().vectors_initialized());
+        let ordering = Ord::cmp(
+            &self.vectors_filled(),
+            &self.initializer().vectors_initialized(),
+        );
 
         match ordering {
-            core::cmp::Ordering::Equal => assert_eq!(self.initializer().bytes_initialized_for_current_vector(), current_vector_all.len()),
+            core::cmp::Ordering::Equal => assert_eq!(
+                self.initializer().bytes_initialized_for_current_vector(),
+                current_vector_all.len()
+            ),
             core::cmp::Ordering::Less => (),
             core::cmp::Ordering::Greater => unsafe { core::hint::unreachable_unchecked() },
         }
 
         self.vectors_filled += 1;
         self.bytes_filled_for_vector = 0;
+    }
+    pub fn with_current_vector_unfilled_zeroed(&mut self) -> Option<&mut [u8]> {
+        let _ = self.current_vector_all()?;
+
+        let ordering = Ord::cmp(
+            &self.vectors_filled(),
+            &self.initializer().vectors_initialized(),
+        );
+
+        match ordering {
+            // If the current vector is not fully initialized, we must first initialize the rest,
+            // before returning the vector as initialized.
+            core::cmp::Ordering::Equal => {
+                self.initializer_mut().zero_current_vector_uninit_part();
+            }
+            // No need to initialize anything since the initialized vectors are already ahead of
+            // the vectors that need to be filled.
+            core::cmp::Ordering::Less => (),
+            core::cmp::Ordering::Greater => unsafe { core::hint::unreachable_unchecked() },
+        }
+
+        Some(unsafe {
+            let current_vector_all = self.current_vector_all_mut().expect(
+                "expected the current vector to exist, since an earlier check has been done",
+            );
+
+            crate::cast_uninit_to_init_slice_mut(current_vector_all)
+        })
     }
 }
 #[derive(Clone, Copy, Debug, Default)]
@@ -509,5 +557,23 @@ mod tests {
 
         assert_eq!(buffers.vectors_filled(), 0);
         //assert_eq!(buffers.vectors_remaining(), 4);
+    }
+    #[test]
+    fn with_current_vector_unfilled_zeroed() {
+        let mut a = [MaybeUninit::<u8>::uninit(); 32];
+        let mut b = [MaybeUninit::uninit(); 8];
+        let mut c = [MaybeUninit::uninit(); 16];
+        let mut d = [MaybeUninit::uninit(); 9];
+
+        let mut vectors = [&mut a[..], &mut b[..], &mut c[..], &mut d[..]];
+        let mut buffers = Buffers::new(&mut vectors[..]);
+        let text = b"Hello, world!";
+
+        while let Some(slice) = buffers.with_current_vector_unfilled_zeroed() {
+            let to_copy = core::cmp::min(slice.len(), text.len());
+            slice[..to_copy].copy_from_slice(&text[..to_copy]);
+            buffers.advance_to_current_vector_end();
+        }
+        // TODO: Check that the vectors have the correct values.
     }
 }

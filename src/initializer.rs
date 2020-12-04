@@ -526,7 +526,9 @@ where
             .inner
             .as_maybe_uninit_vectors()
             .get(self.vectors_initialized)
-            .map_or(true, |current_vector| current_vector.as_maybe_uninit_slice().len()
+            .map_or(true, |current_vector| current_vector
+                .as_maybe_uninit_slice()
+                .len()
                 >= self.bytes_initialized_for_vector));
         debug_assert!(self.bytes_initialized_for_vector <= isize::MAX as usize);
         debug_assert!(self.inner.as_maybe_uninit_vectors().len() >= self.vectors_initialized);

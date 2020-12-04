@@ -734,6 +734,13 @@ where
     pub fn zero_current_vector_uninit_part(&mut self) {
         self.fill_current_vector_uninit_part(0_u8)
     }
+    pub fn try_into_init(self) -> Result<crate::InitVectors<T>, Self> {
+        if self.vectors_remaining() == 0 {
+            Ok(unsafe { crate::InitVectors::new_unchecked(self.into_inner()) })
+        } else {
+            Err(self)
+        }
+    }
 }
 
 #[cfg(test)]

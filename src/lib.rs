@@ -3095,6 +3095,11 @@ pub struct InitVectors<I> {
     inner: I,
 }
 impl<I> InitVectors<I> {
+    pub const unsafe fn new_unchecked(inner: I) -> Self {
+        Self {
+            inner,
+        }
+    }
     #[inline]
     pub fn into_inner(self) -> I {
         self.inner

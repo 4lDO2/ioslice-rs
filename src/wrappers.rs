@@ -261,58 +261,58 @@ impl<'a, 'b, I: InitMarker> From<AssertInitVectors<&'b mut [IoSliceMut<'a, I>]>>
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Single<T>(pub T);
+pub struct SingleVector<T>(pub T);
 
-impl<T> AsRef<[T]> for Single<T> {
+impl<T> AsRef<[T]> for SingleVector<T> {
     #[inline]
     fn as_ref(&self) -> &[T] {
         core::slice::from_ref(&self.0)
     }
 }
-impl<T> AsMut<[T]> for Single<T> {
+impl<T> AsMut<[T]> for SingleVector<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut [T] {
         core::slice::from_mut(&mut self.0)
     }
 }
-impl<T> AsRef<T> for Single<T> {
+impl<T> AsRef<T> for SingleVector<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         &self.0
     }
 }
-impl<T> AsMut<T> for Single<T> {
+impl<T> AsMut<T> for SingleVector<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
-impl<T> Borrow<T> for Single<T> {
+impl<T> Borrow<T> for SingleVector<T> {
     #[inline]
     fn borrow(&self) -> &T {
         &self.0
     }
 }
-impl<T> BorrowMut<T> for Single<T> {
+impl<T> BorrowMut<T> for SingleVector<T> {
     #[inline]
     fn borrow_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
-impl<T> Borrow<[T]> for Single<T> {
+impl<T> Borrow<[T]> for SingleVector<T> {
     #[inline]
     fn borrow(&self) -> &[T] {
         core::slice::from_ref(&self.0)
     }
 }
-impl<T> BorrowMut<[T]> for Single<T> {
+impl<T> BorrowMut<[T]> for SingleVector<T> {
     #[inline]
     fn borrow_mut(&mut self) -> &mut [T] {
         core::slice::from_mut(&mut self.0)
     }
 }
 
-impl<T> Deref for Single<T> {
+impl<T> Deref for SingleVector<T> {
     type Target = T;
 
     #[inline]
@@ -320,7 +320,7 @@ impl<T> Deref for Single<T> {
         &self.0
     }
 }
-impl<T> DerefMut for Single<T> {
+impl<T> DerefMut for SingleVector<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0

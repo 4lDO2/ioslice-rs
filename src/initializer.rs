@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::traits::{Initialize, InitializeExt as _, InitializeVectored};
-use crate::wrappers::{AssertInit, AssertInitVectors, Single};
+use crate::wrappers::{AssertInit, AssertInitVectors, SingleVector};
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -403,14 +403,14 @@ impl<T> BuffersInitializer<T> {
         inner
     }
 }
-impl<T> BuffersInitializer<Single<T>> {
+impl<T> BuffersInitializer<SingleVector<T>> {
     pub fn from_single_buffer_initializer(single: BufferInitializer<T>) -> Self {
         let BufferInitializer { bytes_initialized, inner } = single;
 
         Self {
             bytes_initialized_for_vector: bytes_initialized,
             vectors_initialized: 0,
-            inner: Single(inner),
+            inner: SingleVector(inner),
         }
     }
 }

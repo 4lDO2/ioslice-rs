@@ -3,7 +3,7 @@ use core::mem::MaybeUninit;
 use crate::buffer::Buffer;
 use crate::initializer::BuffersInitializer;
 use crate::traits::{Initialize, InitializeVectored};
-use crate::wrappers::{AssertInit, Single};
+use crate::wrappers::{AssertInit, SingleVector};
 
 pub struct Buffers<T> {
     initializer: BuffersInitializer<T>,
@@ -514,7 +514,7 @@ where
         })
     }
 }
-impl<T> Buffers<Single<T>>
+impl<T> Buffers<SingleVector<T>>
 where
     T: Initialize,
 {

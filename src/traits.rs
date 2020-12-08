@@ -3,6 +3,8 @@ use core::mem::MaybeUninit;
 use crate::iovec::*;
 use crate::iovec::init_marker::*;
 
+use crate::wrappers::AssertInit;
+
 #[cfg(feature = "alloc")]
 use {
     alloc::boxed::Box,
@@ -90,11 +92,11 @@ pub trait InitializeExt: private2::Sealed + Initialize {
     /// # Safety
     ///
     /// The initialization invariant must be upheld for this to be safe.
-    unsafe fn assume_init(self) -> crate::wrappers::Init<Self> {
-        crate::wrappers::Init::new(self)
+    unsafe fn assume_init(self) -> AssertInit<Self> {
+        AssertInit::new(self)
     }
     #[inline]
-    fn init_by_filling(mut self, byte: u8) -> crate::wrappers::Init<Self> {
+    fn init_by_filling(mut self, byte: u8) -> AssertInit<Self> {
         unsafe {
             crate::fill_uninit_slice(self.as_maybe_uninit_slice_mut(), byte);
             self.assume_init()
@@ -102,7 +104,7 @@ pub trait InitializeExt: private2::Sealed + Initialize {
     }
 
     #[inline]
-    fn init_by_copying(mut self, source: &[u8]) -> crate::wrappers::Init<Self> {
+    fn init_by_copying(mut self, source: &[u8]) -> AssertInit<Self> {
         unsafe {
             let slice = self.as_maybe_uninit_slice_mut();
             assert_eq!(source.len(), slice.len(), "in order to fully initialize a slice-like type, the source slice must be exactly as large");
@@ -139,9 +141,9 @@ unsafe impl<'a, I: InitMarker> Initialize for IoSliceMut<'a, I> {
         IoSliceMut::as_maybe_uninit_slice_mut(self)
     }
 }
-impl<'a, I: InitMarker> From<crate::wrappers::Init<IoSliceMut<'a, I>>> for IoSliceMut<'a, Init> {
+impl<'a, I: InitMarker> From<AssertInit<IoSliceMut<'a, I>>> for IoSliceMut<'a, Init> {
     #[inline]
-    fn from(init_ioslice: crate::wrappers::Init<IoSliceMut<'a, I>>) -> IoSliceMut<'a, Init> {
+    fn from(init_ioslice: AssertInit<IoSliceMut<'a, I>>) -> IoSliceMut<'a, Init> {
         #[forbid(unconditional_recursion)]
         unsafe {
             IoSliceMut::assume_init(init_ioslice.into_inner())
@@ -170,9 +172,9 @@ unsafe impl<'a> Initialize for &'a mut [MaybeUninit<u8>] {
         self
     }
 }
-impl<'a, T> From<crate::wrappers::Init<&'a mut [MaybeUninit<T>]>> for &'a mut [T] {
+impl<'a, T> From<AssertInit<&'a mut [MaybeUninit<T>]>> for &'a mut [T] {
     #[inline]
-    fn from(init_slice: crate::wrappers::Init<&'a mut [MaybeUninit<T>]>) -> &'a mut [T] {
+    fn from(init_slice: AssertInit<&'a mut [MaybeUninit<T>]>) -> &'a mut [T] {
         unsafe { crate::cast_uninit_to_init_slice_mut(init_slice.into_inner()) }
     }
 }
@@ -236,9 +238,9 @@ unsafe impl Initialize for Box<[MaybeUninit<u8>]> {
     }
 }
 #[cfg(feature = "alloc")]
-impl From<crate::wrappers::Init<Box<[MaybeUninit<u8>]>>> for Box<[u8]> {
+impl From<AssertInit<Box<[MaybeUninit<u8>]>>> for Box<[u8]> {
     #[inline]
-    fn from(init_box: crate::wrappers::Init<Box<[MaybeUninit<u8>]>>) -> Box<[u8]> {
+    fn from(init_box: AssertInit<Box<[MaybeUninit<u8>]>>) -> Box<[u8]> {
         #[cfg(feature = "nightly")]
         unsafe {
             #[forbid(unconditional_recursion)]
@@ -276,9 +278,9 @@ unsafe impl Initialize for Vec<MaybeUninit<u8>> {
     }
 }
 #[cfg(feature = "alloc")]
-impl From<crate::wrappers::Init<Vec<MaybeUninit<u8>>>> for Vec<u8> {
+impl From<AssertInit<Vec<MaybeUninit<u8>>>> for Vec<u8> {
     #[inline]
-    fn from(init_vec: crate::wrappers::Init<Vec<MaybeUninit<u8>>>) -> Vec<u8> {
+    fn from(init_vec: AssertInit<Vec<MaybeUninit<u8>>>) -> Vec<u8> {
         unsafe {
             let mut vec = init_vec.into_inner();
             //let (ptr, cap, len) = Vec::into_raw_parts(self);

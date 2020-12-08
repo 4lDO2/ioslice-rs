@@ -3,7 +3,7 @@ use core::mem::MaybeUninit;
 use crate::buffer::Buffer;
 use crate::initializer::BuffersInitializer;
 use crate::traits::{Initialize, InitializeVectored};
-use crate::wrappers::{Init, Single};
+use crate::wrappers::{AssertInit, Single};
 
 pub struct Buffers<T> {
     initializer: BuffersInitializer<T>,
@@ -59,7 +59,7 @@ where
     T: InitializeVectored,
 {
     #[inline]
-    pub fn all_previously_filled_vectors(&self) -> &[Init<T::UninitVector>] {
+    pub fn all_previously_filled_vectors(&self) -> &[AssertInit<T::UninitVector>] {
         self.debug_assert_validity();
 
         unsafe {
@@ -69,17 +69,17 @@ where
                 core::slice::from_raw_parts(src.as_ptr(), self.vectors_filled())
             };
 
-            Init::cast_from_slices(filled)
+            AssertInit::cast_from_slices(filled)
         }
     }
     #[inline]
-    pub fn all_previously_filled_vectors_mut(&mut self) -> &[Init<T::UninitVector>] {
+    pub fn all_previously_filled_vectors_mut(&mut self) -> &[AssertInit<T::UninitVector>] {
         self.debug_assert_validity();
 
         unsafe {
             let ptr = { self.initializer_mut().all_uninit_vectors_mut().as_mut_ptr() };
             let filled = core::slice::from_raw_parts_mut(ptr, self.vectors_filled());
-            Init::cast_from_slices_mut(filled)
+            AssertInit::cast_from_slices_mut(filled)
         }
     }
     #[inline]
@@ -286,7 +286,7 @@ where
     }
     /// Return all vectors that have been fully filled, sequentially, as well as the filled part of
     /// the current vector in progress.
-    pub fn all_filled_vectors(&self) -> (&[Init<T::UninitVector>], &[u8]) {
+    pub fn all_filled_vectors(&self) -> (&[AssertInit<T::UninitVector>], &[u8]) {
         // TODO: Distinguish between None and Some(&[]). Do we really want optional values, when
         // empty slices work too?
         (

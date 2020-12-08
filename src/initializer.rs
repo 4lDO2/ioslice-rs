@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::traits::{Initialize, InitializeExt as _, InitializeVectored};
-use crate::wrappers::{Init, InitVectors, Single};
+use crate::wrappers::{AssertInit, InitVectors, Single};
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -97,7 +97,7 @@ where
     ///
     /// The caller must uphold the initialization invariant.
     #[inline]
-    pub unsafe fn assume_init(self) -> Init<T> {
+    pub unsafe fn assume_init(self) -> AssertInit<T> {
         self.inner.assume_init()
     }
 
@@ -262,7 +262,7 @@ where
     /// Try to transform the initializing type, into its initialized counterpart, provided that the
     /// it has been fully initialized.
     #[inline]
-    pub fn try_into_init(self) -> Result<Init<T>, Self> {
+    pub fn try_into_init(self) -> Result<AssertInit<T>, Self> {
         if self.is_completely_init() {
             Ok(unsafe { self.assume_init() })
         } else {
@@ -271,7 +271,7 @@ where
     }
     /// Finish the initialization by writing `byte` to the uninitialized region, and then get the
     /// final initialized type.
-    pub fn finish_init_by_filling(mut self, byte: u8) -> Init<T> {
+    pub fn finish_init_by_filling(mut self, byte: u8) -> AssertInit<T> {
         self.fill_uninit_part(byte);
         unsafe { self.assume_init() }
     }
@@ -340,7 +340,7 @@ where
 {
     /// Finish the initialization by zeroing uninitialized region, and then get the final
     /// initialized type.
-    pub fn finish_init_by_zeroing(self) -> Init<T> {
+    pub fn finish_init_by_zeroing(self) -> AssertInit<T> {
         self.finish_init_by_filling(0_u8)
     }
     #[inline]

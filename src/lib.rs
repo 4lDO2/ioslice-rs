@@ -86,7 +86,11 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(
     feature = "nightly",
-    feature(min_const_generics, new_uninit, slice_fill)
+    feature(min_const_generics, slice_fill),
+)]
+#![cfg_attr(
+    all(feature = "nightly", feature = "alloc"),
+    feature(new_uninit),
 )]
 
 #[cfg(all(unix, windows))]
@@ -100,13 +104,6 @@ pub mod traits;
 pub mod wrappers;
 
 use core::mem::MaybeUninit;
-
-#[allow(unused_imports)]
-use core::mem;
-
-#[allow(unused_imports)]
-#[cfg(feature = "alloc")]
-use alloc::boxed::Box;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

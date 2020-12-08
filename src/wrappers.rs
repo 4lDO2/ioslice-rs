@@ -9,11 +9,11 @@ use crate::traits::Initialize;
 /// A wrapper over `T` that assumes all of `T` to be initialized.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
-pub struct Init<T> {
+pub struct AssertInit<T> {
     inner: T,
 }
 
-impl<T> Init<T> {
+impl<T> AssertInit<T> {
     /// Wrap a possibly-uninitialized value `inner` into, assuming that it is fully initialized.
     ///
     /// # Safety
@@ -24,7 +24,7 @@ impl<T> Init<T> {
     pub const unsafe fn new(inner: T) -> Self {
         Self { inner }
     }
-    /// Cast `&[T]` to `&[Init<T>]`.
+    /// Cast `&[T]` to `&[AssertInit<T>]`.
     ///
     /// # Safety
     ///
@@ -32,12 +32,12 @@ impl<T> Init<T> {
     /// initialization invariant.
     #[inline]
     pub unsafe fn cast_from_slices(inner_slices: &[T]) -> &[Self] {
-        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
-        // same layout. The only contract that the caller has to follow, is that the data must
+        // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the slices have
+        // the same layout. The only contract that the caller has to follow, is that the data must
         // actually be initialized.
         core::slice::from_raw_parts(inner_slices.as_ptr() as *const Self, inner_slices.len())
     }
-    /// Cast `&mut [T]` to `&mut [Init<T>]`.
+    /// Cast `&mut [T]` to `&mut [AssertInit<T>]`.
     ///
     /// # Safety
     ///
@@ -45,23 +45,23 @@ impl<T> Init<T> {
     /// initialization invariant.
     #[inline]
     pub unsafe fn cast_from_slices_mut(inner_slices: &mut [T]) -> &mut [Self] {
-        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
-        // same layout. The only contract that the caller has to follow, is that the data must
+        // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the slices have
+        // the same layout. The only contract that the caller has to follow, is that the data must
         // actually be initialized.
         core::slice::from_raw_parts_mut(inner_slices.as_ptr() as *mut Self, inner_slices.len())
     }
-    /// Cast `&[Init<T>]` to `&mut [Init<T>]`.
+    /// Cast `&[AssertInit<T>]` to `&mut [AssertInit<T>]`.
     #[inline]
     pub fn cast_to_uninit_slices(selves: &[Self]) -> &[T] {
         unsafe {
-            // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
+            // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the slices have the
             // same layout.
             //
             // Since the returned slice is immutable, nothing can be deinitialized.
             core::slice::from_raw_parts(selves.as_ptr() as *const T, selves.len())
         }
     }
-    /// Cast `&mut [Init<T>]` to `&mut [T]`.
+    /// Cast `&mut [AssertInit<T>]` to `&mut [T]`.
     ///
     /// # Safety
     ///
@@ -70,26 +70,26 @@ impl<T> Init<T> {
     /// overwrite an already initialized value with [`MaybeUninit::uninit()`].
     #[inline]
     pub unsafe fn cast_to_uninit_slices_mut(selves: &mut [Self]) -> &mut [T] {
-        // SAFETY: This is safe because Init is #[repr(transparent)], making the slices have the
-        // same layout. The only contract that the caller has to follow, is that the data must
+        // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the slices have
+        // the same layout. The only contract that the caller has to follow, is that the data must
         // never be de-initialized.
         core::slice::from_raw_parts_mut(selves.as_ptr() as *mut T, selves.len())
     }
     #[inline]
     pub fn from_ref(inner_slice: &T) -> &Self {
         unsafe {
-            // SAFETY: This is safe because Init is #[repr(transparent)], making the references
-            // have the same layout. The only contract that the caller has to follow, is that the
-            // data must actually be initialized.
+            // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the
+            // references have the same layout. The only contract that the caller has to follow, is
+            // that the data must actually be initialized.
             &*(inner_slice as *const T as *const Self)
         }
     }
     #[inline]
     pub fn from_mut(inner_slice: &mut T) -> &mut Self {
         unsafe {
-            // SAFETY: This is safe because Init is #[repr(transparent)], making the references
-            // have the same layout. The only contract that the caller has to follow, is that the
-            // data must actually be initialized.
+            // SAFETY: This is safe because AssertInit is #[repr(transparent)], making the
+            // references have the same layout. The only contract that the caller has to follow, is
+            // that the data must actually be initialized.
             &mut *(inner_slice as *mut T as *mut Self)
         }
     }
@@ -106,7 +106,7 @@ impl<T> Init<T> {
         &mut self.inner
     }
 }
-impl<T> Init<T>
+impl<T> AssertInit<T>
 where
     T: Initialize,
 {
@@ -137,7 +137,7 @@ where
         self.inner_mut().as_maybe_uninit_slice_mut()
     }
 }
-impl<T> AsRef<[u8]> for Init<T>
+impl<T> AsRef<[u8]> for AssertInit<T>
 where
     T: Initialize,
 {
@@ -146,7 +146,7 @@ where
         self.get_init_ref()
     }
 }
-impl<T> AsMut<[u8]> for Init<T>
+impl<T> AsMut<[u8]> for AssertInit<T>
 where
     T: Initialize,
 {
@@ -155,7 +155,7 @@ where
         self.get_init_mut()
     }
 }
-impl<T> AsRef<[MaybeUninit<u8>]> for Init<T>
+impl<T> AsRef<[MaybeUninit<u8>]> for AssertInit<T>
 where
     T: Initialize,
 {
@@ -164,7 +164,7 @@ where
         self.get_uninit_ref()
     }
 }
-impl<T> Borrow<[u8]> for Init<T>
+impl<T> Borrow<[u8]> for AssertInit<T>
 where
     T: Initialize,
 {
@@ -173,7 +173,7 @@ where
         self.get_init_ref()
     }
 }
-impl<T> BorrowMut<[u8]> for Init<T>
+impl<T> BorrowMut<[u8]> for AssertInit<T>
 where
     T: Initialize,
 {
@@ -182,7 +182,7 @@ where
         self.get_init_mut()
     }
 }
-impl<T> Deref for Init<T>
+impl<T> Deref for AssertInit<T>
 where
     T: Initialize,
 {
@@ -193,7 +193,7 @@ where
         self.get_init_ref()
     }
 }
-impl<T> DerefMut for Init<T>
+impl<T> DerefMut for AssertInit<T>
 where
     T: Initialize,
 {
@@ -202,7 +202,7 @@ where
         self.get_init_mut()
     }
 }
-impl<T> PartialEq for Init<T>
+impl<T> PartialEq for AssertInit<T>
 where
     T: Initialize,
 {
@@ -210,8 +210,8 @@ where
         self.get_init_ref() == other.get_init_ref()
     }
 }
-impl<T> Eq for Init<T> where T: Initialize {}
-impl<T> PartialOrd for Init<T>
+impl<T> Eq for AssertInit<T> where T: Initialize {}
+impl<T> PartialOrd for AssertInit<T>
 where
     T: Initialize,
 {
@@ -219,7 +219,7 @@ where
         Some(Ord::cmp(self, other))
     }
 }
-impl<T> Ord for Init<T>
+impl<T> Ord for AssertInit<T>
 where
     T: Initialize,
 {
@@ -227,7 +227,7 @@ where
         Ord::cmp(self.get_init_ref(), other.get_init_ref())
     }
 }
-impl<T> core::hash::Hash for Init<T>
+impl<T> core::hash::Hash for AssertInit<T>
 where
     T: Initialize,
 {

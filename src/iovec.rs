@@ -13,6 +13,7 @@ use winapi::shared::{
 use syscall::data::IoVec;
 
 use crate::traits::Initialize;
+use crate::wrappers::AssertInit;
 
 pub mod init_marker {
     use super::*;
@@ -1443,9 +1444,9 @@ unsafe impl<const N: usize> Initialize for [MaybeUninit<u8>; N] {
     }
 }
 #[cfg(feature = "nightly")]
-impl<const N: usize> From<crate::wrappers::Init<[MaybeUninit<u8>; N]>> for [u8; N] {
+impl<const N: usize> From<AssertInit<[MaybeUninit<u8>; N]>> for [u8; N] {
     #[inline]
-    fn from(init: crate::wrappers::Init<[MaybeUninit<u8>; N]>) -> [u8; N] {
+    fn from(init: AssertInit<[MaybeUninit<u8>; N]>) -> [u8; N] {
         unsafe {
             // SAFETY: This is safe, since [u8; N] and [MaybeUninit<u8>; N] are guaranteed to have the
             // exact same layouts, making them interchangable except for the initialization invariant,
@@ -1494,9 +1495,9 @@ mod for_arrays {
                     &mut *self
                 }
             }
-            impl From<crate::wrappers::Init<[MaybeUninit<u8>; $size]>> for [u8; $size] {
+            impl From<AssertInit<[MaybeUninit<u8>; $size]>> for [u8; $size] {
                 #[inline]
-                fn from(init_array: crate::wrappers::Init<[MaybeUninit<u8>; $size]>) -> [u8; $size] {
+                fn from(init_array: AssertInit<[MaybeUninit<u8>; $size]>) -> [u8; $size] {
                     unsafe {
                         // SAFETY: Refer to assume_init for the const generics-based version of this
                         // impl..
@@ -2065,9 +2066,9 @@ mod io_box {
             IoBox::as_maybe_uninit_slice_mut(self)
         }
     }
-    impl<I: InitMarker> From<crate::wrappers::Init<IoBox<I>>> for IoBox<init_marker::Init> {
+    impl<I: InitMarker> From<AssertInit<IoBox<I>>> for IoBox<Init> {
         #[inline]
-        fn from(init_iobox: crate::wrappers::Init<IoBox<I>>) -> IoBox<init_marker::Init> {
+        fn from(init_iobox: AssertInit<IoBox<I>>) -> IoBox<Init> {
             let (ptr, len) = init_iobox.into_inner().into_raw_parts();
             let ptr = ptr as *mut u8;
             unsafe { IoBox::from_raw_parts(ptr, len) }

@@ -237,10 +237,10 @@ where
 }
 
 #[repr(transparent)]
-pub struct InitVectors<I> {
+pub struct AssertInitVectors<I> {
     inner: I,
 }
-impl<I> InitVectors<I> {
+impl<I> AssertInitVectors<I> {
     pub const unsafe fn new_unchecked(inner: I) -> Self {
         Self {
             inner,
@@ -252,10 +252,10 @@ impl<I> InitVectors<I> {
     }
 }
 
-impl<'a, 'b, I: InitMarker> From<InitVectors<&'b mut [IoSliceMut<'a, I>]>>
+impl<'a, 'b, I: InitMarker> From<AssertInitVectors<&'b mut [IoSliceMut<'a, I>]>>
     for &'b mut [IoSliceMut<'a, init_marker::Init>]
 {
-    fn from(init_vectors: InitVectors<&'b mut [IoSliceMut<'a, I>]>) -> Self {
+    fn from(init_vectors: AssertInitVectors<&'b mut [IoSliceMut<'a, I>]>) -> Self {
         unsafe { IoSliceMut::cast_to_init_slices_mut(init_vectors.into_inner()) }
     }
 }

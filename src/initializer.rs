@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::traits::{Initialize, InitializeExt as _, InitializeVectored};
-use crate::wrappers::{AssertInit, InitVectors, Single};
+use crate::wrappers::{AssertInit, AssertInitVectors, Single};
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -736,9 +736,9 @@ where
     pub fn zero_current_vector_uninit_part(&mut self) {
         self.fill_current_vector_uninit_part(0_u8)
     }
-    pub fn try_into_init(self) -> Result<InitVectors<T>, Self> {
+    pub fn try_into_init(self) -> Result<AssertInitVectors<T>, Self> {
         if self.vectors_remaining() == 0 {
-            Ok(unsafe { InitVectors::new_unchecked(self.into_inner()) })
+            Ok(unsafe { AssertInitVectors::new_unchecked(self.into_inner()) })
         } else {
             Err(self)
         }

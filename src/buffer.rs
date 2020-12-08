@@ -9,9 +9,8 @@
 use core::fmt;
 use core::mem::MaybeUninit;
 
-use crate::{Initialize, InitializeExt};
-
 use crate::initializer::BufferInitializer;
+use crate::traits::{Initialize, InitializeExt};
 
 pub struct Buffer<T> {
     pub(crate) initializer: BufferInitializer<T>,

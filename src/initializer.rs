@@ -1,6 +1,7 @@
 use core::mem::MaybeUninit;
 
-use crate::{Init, Initialize, InitializeExt as _};
+use crate::traits::{Initialize, InitializeExt as _, InitializeVectored};
+use crate::wrappers::{Init, InitVectors, Single};
 
 /// An initialized tracking a container type that dereferences into a slice of
 /// possibly-uninitialized bytes, and how many bytes have been initialized, respectively. The inner
@@ -10,7 +11,8 @@ use crate::{Init, Initialize, InitializeExt as _};
 #[derive(Debug)]
 pub struct BufferInitializer<T> {
     // This is the Buffer type, that wraps a _single_ buffer that is not guaranteed to be fully
-    // initialized when wrapped.
+    // initialized when wrapped, but where the number of initialized bytes is tracked, so that it
+    // can still call naïve APIs that expected initialized buffers without overhead.
     //
     // The inner data, which must implement `Initialize` to do anything useful with points to a
     // slice of possibly uninitialized bytes, and must always return the same slice in the trait
@@ -54,7 +56,7 @@ impl<T> BufferInitializer<T> {
 }
 impl<T> BufferInitializer<T>
 where
-    T: crate::Initialize,
+    T: Initialize,
 {
     pub(crate) fn debug_assert_validity(&self) {
         debug_assert!(self.bytes_initialized <= self.capacity());
@@ -401,21 +403,21 @@ impl<T> BuffersInitializer<T> {
         inner
     }
 }
-impl<T> BuffersInitializer<crate::Single<T>> {
+impl<T> BuffersInitializer<Single<T>> {
     pub fn from_single_buffer_initializer(single: BufferInitializer<T>) -> Self {
         let BufferInitializer { bytes_initialized, inner } = single;
 
         Self {
             bytes_initialized_for_vector: bytes_initialized,
             vectors_initialized: 0,
-            inner: crate::Single(inner),
+            inner: Single(inner),
         }
     }
 }
 
 impl<T> BuffersInitializer<T>
 where
-    T: crate::InitializeVectored,
+    T: InitializeVectored,
 {
     #[inline]
     fn all_vectors_uninit(&self) -> &[T::UninitVector] {
@@ -734,9 +736,9 @@ where
     pub fn zero_current_vector_uninit_part(&mut self) {
         self.fill_current_vector_uninit_part(0_u8)
     }
-    pub fn try_into_init(self) -> Result<crate::InitVectors<T>, Self> {
+    pub fn try_into_init(self) -> Result<InitVectors<T>, Self> {
         if self.vectors_remaining() == 0 {
-            Ok(unsafe { crate::InitVectors::new_unchecked(self.into_inner()) })
+            Ok(unsafe { InitVectors::new_unchecked(self.into_inner()) })
         } else {
             Err(self)
         }

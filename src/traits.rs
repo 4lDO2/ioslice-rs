@@ -93,7 +93,7 @@ pub trait InitializeExt: private2::Sealed + Initialize {
     ///
     /// The initialization invariant must be upheld for this to be safe.
     unsafe fn assume_init(self) -> AssertInit<Self> {
-        AssertInit::new(self)
+        AssertInit::new_unchecked(self)
     }
     #[inline]
     fn init_by_filling(mut self, byte: u8) -> AssertInit<Self> {

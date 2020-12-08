@@ -21,7 +21,7 @@ impl<T> AssertInit<T> {
     /// The caller must ensure that `inner` is fully initialized before this function can be
     /// called.
     #[inline]
-    pub const unsafe fn new(inner: T) -> Self {
+    pub const unsafe fn new_unchecked(inner: T) -> Self {
         Self { inner }
     }
     /// Cast `&[T]` to `&[AssertInit<T>]`.

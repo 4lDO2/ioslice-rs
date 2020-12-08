@@ -197,4 +197,3 @@ pub fn fill_uninit_slice<U: Copy>(slice: &mut [MaybeUninit<U>], byte: U) -> &mut
         cast_uninit_to_init_slice_mut(slice)
     }
 }
-

@@ -633,7 +633,7 @@ impl<'a, 'b> PartialOrd<IoSliceMut<'b, Init>> for IoSlice<'a, Init> {
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> PartialOrd<[u8; N]> for IoSlice<'a, Init> {
     #[inline]
-    fn partial_cmp(&self, other: &[u8; N]) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &[u8; N]) -> Option<core::cmp::Ordering> {
         PartialOrd::partial_cmp(self.as_slice(), other)
     }
 }
@@ -1379,7 +1379,7 @@ impl<'a, 'b> PartialOrd<IoSlice<'b, Init>> for IoSliceMut<'a, Init> {
 #[cfg(feature = "nightly")]
 impl<'a, const N: usize> PartialOrd<[u8; N]> for IoSliceMut<'a, Init> {
     #[inline]
-    fn partial_cmp(&self, other: &[u8; N]) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &[u8; N]) -> Option<core::cmp::Ordering> {
         PartialOrd::partial_cmp(self.as_slice(), other)
     }
 }
@@ -1424,11 +1424,11 @@ unsafe impl<'a> stable_deref_trait::StableDeref for IoSliceMut<'a> {}
 unsafe impl<const N: usize> Initialize for [u8; N] {
     #[inline]
     fn as_maybe_uninit_slice(&self) -> &[MaybeUninit<u8>] {
-        cast_init_to_uninit_slice(&*self)
+        crate::cast_init_to_uninit_slice(&*self)
     }
     #[inline]
     unsafe fn as_maybe_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        cast_init_to_uninit_slice_mut(&mut *self)
+        crate::cast_init_to_uninit_slice_mut(&mut *self)
     }
 }
 #[cfg(feature = "nightly")]
@@ -1443,9 +1443,9 @@ unsafe impl<const N: usize> Initialize for [MaybeUninit<u8>; N] {
     }
 }
 #[cfg(feature = "nightly")]
-impl<const N: usize> From<Init<[MaybeUninit<u8>; N]>> for [u8; N] {
+impl<const N: usize> From<crate::wrappers::Init<[MaybeUninit<u8>; N]>> for [u8; N] {
     #[inline]
-    fn from(init: Init<[MaybeUninit<u8>; N]>) -> [u8; N] {
+    fn from(init: crate::wrappers::Init<[MaybeUninit<u8>; N]>) -> [u8; N] {
         unsafe {
             // SAFETY: This is safe, since [u8; N] and [MaybeUninit<u8>; N] are guaranteed to have the
             // exact same layouts, making them interchangable except for the initialization invariant,

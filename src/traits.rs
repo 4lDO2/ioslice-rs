@@ -3,6 +3,12 @@ use core::mem::MaybeUninit;
 use crate::iovec::*;
 use crate::iovec::init_marker::*;
 
+#[cfg(feature = "alloc")]
+use {
+    alloc::boxed::Box,
+    alloc::vec::Vec,
+};
+
 /// A trait for mutable initializable slices, that provide access to all the data required for
 /// initialization, before the data can be assumed to be fully initialized.
 ///

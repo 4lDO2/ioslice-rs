@@ -1,6 +1,6 @@
 [package]
 name = "ioslice"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["4lDO2 <4lDO2@protonmail.com>"]
 edition = "2018"
 description = "no_std I/O slices that are still optionally ABI compatible with std and lbc"
@@ -31,6 +31,7 @@ winapi = { version = "0.3", optional = true, features = ["ntdef", "ws2def"] }
 
 [dev-dependencies]
 libc = "0.2"
+uninit-tools = { version = "0.1", path = "../uninit-tools", features = ["ioslice-iobox"] }
 
 [badges]
 travis-ci = { repository = "4lDO2/ioslice-rs", branch = "master" }

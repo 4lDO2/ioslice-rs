@@ -16,7 +16,6 @@
 //! regardless of the features used, so long as the slice is marked as initialized.
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(min_const_generics, slice_fill))]
 #![cfg_attr(all(feature = "nightly", feature = "alloc"), feature(new_uninit))]
 
 #[cfg(all(unix, windows))]

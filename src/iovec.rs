@@ -1042,18 +1042,7 @@ impl<'a, I: InitMarker> IoSliceMut<'a, I> {
     #[inline]
     #[must_use]
     pub fn zeroed_by_ref<'b>(&'b mut self) -> &'b mut IoSliceMut<'a, Init> {
-        #[cfg(feature = "nightly")]
-        {
-            self.as_maybe_uninit_slice_mut().fill(MaybeUninit::new(0));
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            for byte in self.as_maybe_uninit_slice_mut() {
-                *byte = MaybeUninit::new(0);
-            }
-        }
-
+        self.as_maybe_uninit_slice_mut().fill(MaybeUninit::new(0));
         unsafe { self.assume_init_mut() }
     }
 

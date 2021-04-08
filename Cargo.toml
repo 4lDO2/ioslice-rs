@@ -31,7 +31,7 @@ winapi = { version = "0.3", optional = true, features = ["ntdef", "ws2def"] }
 
 [dev-dependencies]
 libc = "0.2"
-uninit-tools = { version = "0.1", path = "../uninit-tools", features = ["ioslice-iobox"] }
+uninit-tools = { version = "0.1", features = ["ioslice-iobox"] }
 
 [badges]
 travis-ci = { repository = "4lDO2/ioslice-rs", branch = "master" }

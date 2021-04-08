@@ -1,6 +1,6 @@
 [package]
 name = "ioslice"
-version = "0.6.0"
+version = "0.6.0-alpha.0"
 authors = ["4lDO2 <4lDO2@protonmail.com>"]
 edition = "2018"
 description = "no_std I/O slices that are still optionally ABI compatible with std and lbc"
@@ -21,7 +21,9 @@ nightly = []
 
 [dependencies]
 stable_deref_trait = { version = "1.2", optional = true }
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "incompat-io_uring-fix", optional = true }
+
+# [target.'cfg(target_os = "redox")'.dependencies]
+# redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "incompat-io_uring-fix", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
@@ -31,7 +33,7 @@ winapi = { version = "0.3", optional = true, features = ["ntdef", "ws2def"] }
 
 [dev-dependencies]
 libc = "0.2"
-uninit-tools = { version = "0.1", features = ["ioslice-iobox"] }
+# uninit-tools = { version = "0.1", features = ["ioslice-iobox"] }
 
 [badges]
 travis-ci = { repository = "4lDO2/ioslice-rs", branch = "master" }

@@ -1937,6 +1937,22 @@ mod io_box {
 #[cfg(feature = "alloc")]
 pub use io_box::*;
 
+// TODO: Replace the million different methods for casting slices to and from system types of I/O
+// vectors, with these traits.
+
+/// A trait for casting slices of different types to and from each other, provided that they have
+/// the same memory layout.
+pub trait CastSlice<T>: Sized {
+    fn cast_slice(selves: &[Self]) -> &[T];
+}
+/// A trait for casting slices of different types to and from each other, mutably, provided that
+/// they have the same memory layout.
+///
+/// Any modifications to the target type must not be able to violate invariants of the source type.
+pub trait CastSliceMut<T>: CastSlice<T> {
+    fn cast_slice_mut(selves: &mut [Self]) -> &mut [T];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

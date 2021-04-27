@@ -1942,15 +1942,42 @@ pub use io_box::*;
 
 /// A trait for casting slices of different types to and from each other, provided that they have
 /// the same memory layout.
-pub trait CastSlice<T>: Sized {
-    fn cast_slice(selves: &[Self]) -> &[T];
+pub trait CastSlice<'a, T>: Sized {
+    fn cast_slice(selves: &'a [Self]) -> &'a [T];
 }
 /// A trait for casting slices of different types to and from each other, mutably, provided that
 /// they have the same memory layout.
 ///
 /// Any modifications to the target type must not be able to violate invariants of the source type.
-pub trait CastSliceMut<T>: CastSlice<T> {
-    fn cast_slice_mut(selves: &mut [Self]) -> &mut [T];
+pub trait CastSliceMut<'a, T>: CastSlice<'a, T> {
+    fn cast_slice_mut(selves: &'a mut [Self]) -> &'a mut [T];
+}
+
+impl<T> CastSlice<'_, T> for T {
+    #[inline]
+    fn cast_slice(selves: &[Self]) -> &[T] {
+        selves
+    }
+}
+impl<T> CastSliceMut<'_, T> for T {
+    #[inline]
+    fn cast_slice_mut(selves: &mut [Self]) -> &mut [T] {
+        selves
+    }
+}
+#[cfg(feature = "alloc")]
+impl<'a, I: InitMarker> CastSlice<'a, IoSlice<'a, I>> for IoBox<I> {
+    #[inline]
+    fn cast_slice(selves: &'a [Self]) -> &'a [IoSlice<'a, I>] {
+        IoBox::cast_to_ioslices(selves)
+    }
+}
+#[cfg(feature = "alloc")]
+impl<'a, I: InitMarker> CastSlice<'a, IoSliceMut<'a, I>> for IoBox<I> {
+    #[inline]
+    fn cast_slice(selves: &'a [Self]) -> &'a [IoSliceMut<'a, I>] {
+        IoBox::cast_to_mut_ioslices(selves)
+    }
 }
 
 #[cfg(test)]
